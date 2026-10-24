@@ -1,0 +1,67 @@
+name: Käännä ja julkaise
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: "4.6"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Asenna Godot ja vientipohjat
+        run: |
+          set -e
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -sSL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip
+          sudo mv Godot_v${GODOT_VERSION}-stable_linux.x86_64 /usr/local/bin/godot
+          curl -sSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          dir="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$dir"
+          unzip -q templates.tpz -d tmpl
+          mv tmpl/templates/* "$dir/"
+          rm -rf tmpl templates.tpz godot.zip
+
+      - name: Tuo projekti
+        run: godot --headless --path . --import || true
+
+      - name: Moninpelitesti
+        run: tests/multiplayer_test.sh godot
+
+      - name: Vie Windows, Linux ja palvelin
+        run: |
+          set -e
+          mkdir -p build/windows build/linux build/server dist
+          godot --headless --path . --export-release "Windows" build/windows/Lumenkolaus.exe
+          godot --headless --path . --export-release "Linux" build/linux/lumenkolaus.x86_64
+          godot --headless --path . --export-release "Linux-palvelin" build/server/lumenkolaus-server.x86_64
+          (cd build/windows && zip -q ../../dist/Lumenkolaus-Windows.zip *)
+          (cd build/linux && zip -q ../../dist/Lumenkolaus-Linux.zip *)
+          cp build/server/lumenkolaus-server.x86_64 dist/
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumenkolaus
+          path: dist/
+
+      - name: Julkaise "uusin"-julkaisuun
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete uusin --yes --cleanup-tag || true
+          gh release create uusin dist/* \
+            --title "Uusin versio" \
+            --notes "Automaattinen build commitista ${GITHUB_SHA::7}. Lataa Lumenkolaus-Windows.zip, pura ja käynnistä Lumenkolaus.exe." \
+            --latest

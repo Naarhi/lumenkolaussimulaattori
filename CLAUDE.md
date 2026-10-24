@@ -1,11 +1,12 @@
 # Lumenkolaussimulaattori
 
-Unreal Engine 5 C++ -projekti, moduuli `LumenKolaus` (Source/LumenKolaus). Käyttäjä kirjoittaa suomeksi.
+Godot 4.6 -projekti (GDScript). Käyttäjä kirjoittaa suomeksi.
 
-- Palvelin päättää kaikesta (authoritative). Asiakas lähettää vain syötteet RPC:llä.
-- Lumi: `ASnowField`, korkeusruudukko FFastArraySerializer-paloina (16 x 16 solua).
-- Taidot ja XP: `ALumiPlayerState`, XP-käyrä on sama kuin Old School RuneScapessa.
-- Satunnaistapahtumat: `ARandomEventManager`, vain palvelimella.
-- Pelipalvelin: käyttäjän kotin Linux-kone, himbe.jnarhi.fi (DDNS), UDP 7777. Docker-tiedostot ovat kansiossa Docker/.
-- Koodia ei voi kääntää pilvikontissa (ei UE:tä). Käännä ja testaa käyttäjän Windows-koneella.
-- Kommentit ja pelaajalle näkyvät tekstit suomeksi. Koodin tunnisteet englanniksi, paitsi pelikäsitteet (Kolaus, Pertti...).
+- Kaikki rakennetaan koodissa: kohtaus `scenes/main.tscn` on pelkkä runko, ja pelaajat, maisema ja ajoneuvot luodaan skripteissä. Ei ulkoisia assetteja.
+- Palvelin päättää lumesta, XP:stä ja tapahtumista. Asiakas lähettää vain `srv_shovel`-RPC:n. Pelaajan liike on asiakkaan omaa ja synkronoidaan MultiplayerSynchronizerilla.
+- Lumi: `scripts/snow_field.gd`, korkeusruudukko 192 x 192 (cm), palat 16 x 16. Godot piirtää myötäpäivään kiertävät kolmiot etupuolina.
+- Taidot: `scripts/skills.gd`, XP-käyrä sama kuin Old School RuneScapessa.
+- Pelipalvelin: käyttäjän kotin Linux-kone, himbe.jnarhi.fi (DDNS), UDP 7777.
+- Testaa pilvikontissa: `godot --headless --path . --import`, sitten `tests/multiplayer_test.sh`. Kuvakaappaus: `xvfb-run -a -s "-screen 0 1600x900x24" godot --path . --rendering-method gl_compatibility --rendering-driver opengl3 -- --host --autotest --screenshot=kuva.png`.
+- GDScript: pakatut taulukot (PackedByteArray ym.) välitetään arvona. Käytä tyypittämättömiä muuttujia solmuille, joiden omia funktioita kutsutaan.
+- Kommentit ja pelaajalle näkyvät tekstit suomeksi. Koodin tunnisteet englanniksi, paitsi pelikäsitteet (Kolaus, Pertti, Pihapiiri...).
