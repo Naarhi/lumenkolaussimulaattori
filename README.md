@@ -158,3 +158,7 @@ xvfb-run -a -s "-screen 0 1600x900x24" godot --path . --rendering-method gl_comp
 ```
 
 GitHub Actions ajaa lumi- ja moninpelitestit jokaisesta muutoksesta ja julkaisee mainista Windows-, Linux- ja palvelinbuildit julkaisuun `uusin`. Vanha Unreal Engine -kokeilu on haarassa `unreal-arkisto`.
+
+## Lisenssi
+
+[MIT](LICENSE). Saat käyttää, muokata ja jakaa koodia vapaasti, kunhan lisenssiteksti kulkee mukana. Peli on tehty [Godotilla](https://godotengine.org/), joka on myös MIT-lisensoitu.
