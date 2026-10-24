@@ -136,6 +136,9 @@ func _pay(index: int) -> void:
 	for peer in workers:
 		var part := maxi(1, roundi(pay * workers[peer] / total))
 		main.add_money(peer, part)
+		main.story.progress(peer, "paid")
+		if share > 0.9:
+			main.story.progress(peer, "tidy:%d" % index)
 		parts.append("%s %d €" % [main.display_name_for(peer)[0], part])
 	var verdict := "Lumet on kasattu siististi kasaan!" if share > 0.9 else ("Osa lumista on heitelty minne sattuu." if share > 0.5 else "Lumet on viskottu pitkin pihaa ja tietä, maksan vain osan.")
 	main.announce("%s: \"%s\" Maksoi %d € / %d €: %s" % [n["name"], verdict, pay, n["pay"], ", ".join(parts)])
