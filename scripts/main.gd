@@ -9,9 +9,9 @@ const Village := preload("res://scripts/village.gd")
 const NeighboursScript := preload("res://scripts/neighbours.gd")
 
 const SHOVEL_REACH := 1.1
-const SHOVEL_RADIUS := 0.25
-const SHOVEL_CAPACITY := 400
-const SHOVEL_BITE_CM := 15
+const SHOVEL_RADIUS := 0.32
+const SHOVEL_CAPACITY := 800
+const SHOVEL_BITE_CM := 20
 const THROW_DISTANCE := 2.6
 const SHOVEL_COOLDOWN_MS := 450
 const FOOTPRINT_CM := 3
@@ -267,7 +267,7 @@ func srv_shovel(yaw: float) -> void:
 		_carried[sender] = 0
 		_cl_carried.rpc(sender, 0)
 		_cl_fx.rpc(target, false)
-		_add_xp(sender, maxi(1, carried / 20))
+		_add_xp(sender, maxi(1, carried / 30))
 		print("[Peli] Pelaaja %d heitti %d" % [sender, carried])
 
 
