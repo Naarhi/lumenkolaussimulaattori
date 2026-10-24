@@ -8,12 +8,18 @@ const DEEP_SNOW_CM := 60.0
 const RUN_MULTIPLIER := 1.6
 const JUMP_VELOCITY := 4.2
 const MOUSE_SENSITIVITY := 0.0025
+const Tools := preload("res://scripts/tools.gd")
 const JACKET_COLORS := [
 	Color(0.75, 0.12, 0.1), Color(0.1, 0.3, 0.7), Color(0.95, 0.55, 0.1),
 	Color(0.15, 0.5, 0.25), Color(0.5, 0.2, 0.6), Color(0.85, 0.75, 0.2),
 ]
 
 var peer_id := 1
+## Valittu työkalu (Tools.LAPIO...) ja onko se käytössä. Pelaaja itse päättää, palvelin lukee synkronoidusta arvosta.
+var tool := 0
+var tool_active := false
+## Testiajo pitää työkalua pohjassa ilman hiirtä.
+var force_active := false
 var head: Node3D
 var camera: Camera3D
 var shovel: Node3D
@@ -21,6 +27,9 @@ var shovel_snow: MeshInstance3D
 
 var _body: Node3D
 var _nametag: Label3D
+var _tool_models: Array[Node3D] = []
+var _tool_fx := {}
+var _sound_timer := 0.0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _swing: Tween
 
@@ -61,12 +70,13 @@ func _init() -> void:
 
 	shovel = _make_shovel()
 	head.add_child(shovel)
+	_build_tools()
 
 	var sync := MultiplayerSynchronizer.new()
 	sync.name = "Sync"
 	sync.root_path = NodePath("..")
 	var config := SceneReplicationConfig.new()
-	for path in [NodePath(".:position"), NodePath(".:rotation"), NodePath("Head:rotation")]:
+	for path in [NodePath(".:position"), NodePath(".:rotation"), NodePath("Head:rotation"), NodePath(".:tool"), NodePath(".:tool_active")]:
 		config.add_property(path)
 		config.property_set_spawn(path, true)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -82,6 +92,54 @@ func _ready() -> void:
 	_body.visible = not mine
 	if mine:
 		add_to_group("local_player")
+
+
+func _build_tools() -> void:
+	var masi := Tools.make_masi()
+	add_child(masi)
+	var blower := Tools.make_blower()
+	add_child(blower)
+	var blower_fx := Tools.make_blower_fx()
+	blower.get_node("FxAnchor").add_child(blower_fx)
+	var flamer := Tools.make_flamethrower()
+	head.add_child(flamer)
+	var flame_fx := Tools.make_flame_fx()
+	flamer.get_node("FxAnchor").add_child(flame_fx)
+	var salt := Tools.make_salt_bucket()
+	head.add_child(salt)
+	var salt_fx := Tools.make_salt_fx()
+	salt.get_node("FxAnchor").add_child(salt_fx)
+	_tool_models = [shovel, masi, blower, flamer, salt]
+	_tool_fx = {Tools.LINKO: blower_fx, Tools.LIEKKI: flame_fx, Tools.SUOLA: salt_fx}
+	_show_tool()
+
+
+func _show_tool() -> void:
+	for i in _tool_models.size():
+		_tool_models[i].visible = i == tool
+
+
+func select_tool(index: int) -> void:
+	tool = posmod(index, Tools.COUNT)
+	_show_tool()
+	_main().hud.set_tool(tool)
+
+
+func _process(delta: float) -> void:
+	if not _tool_models[tool].visible:
+		_show_tool()
+	for t in _tool_fx:
+		_tool_fx[t].emitting = tool_active and tool == t
+	var flamer := _tool_models[Tools.LIEKKI]
+	(flamer.get_node("Pilot") as OmniLight3D).light_energy = 2.5 if tool_active and tool == Tools.LIEKKI else 0.0
+	if tool_active and tool == Tools.LINKO:
+		_tool_models[Tools.LINKO].get_node("Auger").rotate_x(delta * 20.0)
+	_sound_timer -= delta
+	if tool_active and _sound_timer <= 0.0 and DisplayServer.get_name() != "headless":
+		_sound_timer = Tools.SOUND_INTERVAL
+		var sound := Tools.sound_for(tool)
+		if sound >= 0:
+			Sfx.play_at(sound, global_position + Vector3(0, 1, 0), self)
 
 
 func set_display_name(player_name: String) -> void:
@@ -101,8 +159,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("kolaa"):
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		else:
+		elif tool == Tools.LAPIO:
 			request_shovel()
+	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode >= KEY_1 and event.physical_keycode < KEY_1 + Tools.COUNT:
+		select_tool(event.physical_keycode - KEY_1)
+	elif event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		select_tool(tool + (1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1))
 	elif event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
@@ -110,6 +172,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _physics_process(delta: float) -> void:
 	if not is_multiplayer_authority():
 		return
+	tool_active = force_active or tool != Tools.LAPIO and not _typing() and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and Input.is_action_pressed("kolaa")
 	if not is_on_floor():
 		velocity.y -= _gravity * delta
 	elif Input.is_action_just_pressed("hyppy") and not _typing():

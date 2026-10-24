@@ -4,6 +4,7 @@ extends Node3D
 const PlayerScript := preload("res://scripts/player.gd")
 const Pihapiiri := preload("res://scripts/pihapiiri.gd")
 const Skills := preload("res://scripts/skills.gd")
+const Tools := preload("res://scripts/tools.gd")
 
 const SHOVEL_REACH := 1.1
 const SHOVEL_RADIUS := 0.25
@@ -12,6 +13,7 @@ const SHOVEL_BITE_CM := 15
 const THROW_DISTANCE := 2.6
 const SHOVEL_COOLDOWN_MS := 450
 const FOOTPRINT_CM := 3
+const SALT_DURATION := 600.0
 const CHAT_MAX_LENGTH := 120
 const CHAT_COOLDOWN_MS := 600
 
@@ -31,6 +33,9 @@ var _xp := {}
 var _last_shovel := {}
 var _footprint_timer := {}
 var _names := {}
+var _tool_timer := {}
+var _xp_pending := {}
+var _xp_flush := 0.0
 var _last_chat := {}
 
 # Testiajo
@@ -131,6 +136,8 @@ func _on_peer_disconnected(id: int) -> void:
 	if player:
 		player.queue_free()
 	_carried.erase(id)
+	_xp_pending.erase(id)
+	_tool_timer.erase(id)
 
 
 func _on_connected() -> void:
@@ -284,11 +291,61 @@ func announce(text: String) -> void:
 func _physics_process(delta: float) -> void:
 	if multiplayer.is_server() and multiplayer.has_multiplayer_peer():
 		_server_footprints(delta)
+		_server_tools(delta)
 	if not Net.cli.has("autotest") or _autotest_started:
 		return
 	if local_player():
 		_autotest_started = true
 		_run_autotest()
+
+
+## Pohjassa pidettävät työkalut: kola, linko, liekinheitin ja suola.
+func _server_tools(delta: float) -> void:
+	for child in players.get_children():
+		var id := int(String(child.name))
+		var tool: int = child.tool
+		if not child.tool_active or tool == Tools.LAPIO:
+			_tool_timer[id] = 0.0
+			continue
+		var timer: float = _tool_timer.get(id, 0.0) - delta
+		if timer > 0.0:
+			_tool_timer[id] = timer
+			continue
+		_tool_timer[id] = timer + Tools.INTERVAL[tool]
+		var yaw: float = child.rotation.y
+		var forward := Vector3(-sin(yaw), 0.0, -cos(yaw))
+		var right := Vector3(cos(yaw), 0.0, -sin(yaw))
+		var feet: Vector3 = child.global_position
+		var xp := 0.0
+		match tool:
+			Tools.MASI:
+				# Kola työntää lunta edellään. Pihan reunan yli työnnetty lumi katoaa.
+				var moved: int = snow.remove_snow(feet + forward * 0.75, 0.4, 100000, 10)
+				if moved > 0:
+					snow.add_snow(feet + forward * 1.45, 0.45, moved)
+				xp = moved / 150.0
+			Tools.LINKO:
+				# Linko syö lumen edestä ja lennättää sen kuusi metriä oikealle eteen.
+				var blown: int = snow.remove_snow(feet + forward * 0.8, 0.32, 100000, 12)
+				if blown > 0:
+					var throw_dir := (forward * 0.55 + right * 0.85).normalized()
+					snow.add_snow(feet + throw_dir * 6.5, 1.0, blown)
+				xp = blown / 60.0
+			Tools.LIEKKI:
+				var melted: int = snow.remove_snow(feet + forward * 1.6, 0.45, 100000, 3)
+				melted += snow.remove_snow(feet + forward * 2.6, 0.6, 100000, 2)
+				xp = melted / 90.0
+			Tools.SUOLA:
+				snow.salt_area(feet + forward * 1.2, 0.7, SALT_DURATION)
+		_xp_pending[id] = _xp_pending.get(id, 0.0) + xp
+	_xp_flush -= delta
+	if _xp_flush <= 0.0:
+		_xp_flush = 1.0
+		for id in _xp_pending.keys():
+			var whole := int(_xp_pending[id])
+			if whole > 0:
+				_xp_pending[id] -= whole
+				_add_xp(id, whole)
 
 
 ## Liikkuvat pelaajat painavat lunta kasaan (jalanjäljet).
@@ -355,13 +412,21 @@ func _run_autotest() -> void:
 	send_chat("Moi testistä!")
 	await get_tree().create_timer(1.0).timeout
 	var me = local_player()
-	var depth_before: float = snow.depth_at(me.global_position + Vector3(0, 0, -SHOVEL_REACH))
-	for i in 6:
-		me.request_shovel()
-		await get_tree().create_timer(0.7).timeout
+	var tool := int(Net.cli.get("tool", "0"))
+	# Mittauspiste työkalun vaikutusalueelta (katse -Z-suuntaan).
+	var probe := {Tools.LAPIO: SHOVEL_REACH, Tools.MASI: 0.75, Tools.LINKO: 0.8, Tools.LIEKKI: 1.6, Tools.SUOLA: 1.2}[tool] as float
+	var depth_before: float = snow.depth_at(me.global_position + Vector3(0, 0, -probe))
+	if tool == Tools.LAPIO:
+		for i in 6:
+			me.request_shovel()
+			await get_tree().create_timer(0.7).timeout
+	else:
+		me.select_tool(tool)
+		me.force_active = true
+		await get_tree().create_timer(4.0).timeout
 	await get_tree().create_timer(1.0).timeout
-	var depth_after: float = snow.depth_at(me.global_position + Vector3(0, 0, -SHOVEL_REACH))
-	print("AUTOTEST lumi ennen %.0f cm, jälkeen %.0f cm, XP %d" % [depth_before, depth_after, hud.xp])
+	var depth_after: float = snow.depth_at(me.global_position + Vector3(0, 0, -probe))
+	print("AUTOTEST %s: lumi ennen %.0f cm, jälkeen %.0f cm, XP %d" % [Tools.NAMES[tool], depth_before, depth_after, hud.xp])
 	if Net.cli.has("screenshot"):
 		me.rotation.y = deg_to_rad(float(Net.cli.get("yaw", "0")))
 		me.head.rotation.x = -0.35
@@ -371,6 +436,7 @@ func _run_autotest() -> void:
 		var image := get_viewport().get_texture().get_image()
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
-	var ok: bool = depth_after < depth_before and hud.xp > 0
+	me.force_active = false
+	var ok: bool = depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)

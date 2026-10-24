@@ -17,6 +17,9 @@ const SNOWFALL_MAX_DEPTH_CM := 40
 ## Lumimyräkkäkään ei nosta tasaista hankea tätä korkeammaksi.
 const STORM_MAX_DEPTH_CM := 60
 const MAX_MESH_REBUILDS_PER_FRAME := 24
+## Suola sulattaa näin monta cm lunta joka SALT_MELT_INTERVAL sekunti ja estää uuden lumen kertymisen.
+const SALT_MELT_CM := 1
+const SALT_MELT_INTERVAL := 0.4
 
 var heights := PackedByteArray()
 var material: StandardMaterial3D
@@ -26,6 +29,10 @@ var _dirty := {}
 var _mesh_queue := {}
 var _meshes: Array[MeshInstance3D] = []
 var _snowfall_acc := 0.0
+# Palvelin: suolatut solut {indeksi: vanhenemishetki} ja oma kello sekunteina.
+var _salted := {}
+var _clock := 0.0
+var _melt_acc := 0.0
 var _render := true
 
 
@@ -100,6 +107,7 @@ func _physics_process(delta: float) -> void:
 		var whole := int(_snowfall_acc)
 		_snowfall_acc -= whole
 		add_snow_everywhere(whole, SNOWFALL_MAX_DEPTH_CM)
+	melt_salted(delta)
 	_flush_dirty()
 
 
@@ -141,12 +149,43 @@ func add_snow(world_pos: Vector3, radius: float, amount: int) -> void:
 		_change(cells[i].x, cells[i].y, roundi(amount * weights[i] / total))
 
 
+## Suolaa ympyrän alueen duration sekunniksi.
+func salt_area(world_pos: Vector3, radius: float, duration: float) -> int:
+	var count := 0
+	for cell in _cells_in_radius(world_pos, radius):
+		_salted[cell.y * CELLS_X + cell.x] = _clock + duration
+		count += 1
+	return count
+
+
+func is_salted(x: int, z: int) -> bool:
+	return _salted.get(z * CELLS_X + x, -1.0) > _clock
+
+
+## Palvelin: suola sulattaa lunta. Kutsutaan joka fysiikkaruudulla.
+func melt_salted(delta: float) -> void:
+	_clock += delta
+	_melt_acc += delta
+	if _melt_acc < SALT_MELT_INTERVAL:
+		return
+	_melt_acc = 0.0
+	for index in _salted.keys():
+		if _salted[index] <= _clock:
+			_salted.erase(index)
+			continue
+		var x: int = index % CELLS_X
+		@warning_ignore("integer_division")
+		var z: int = index / CELLS_X
+		if heights[index] > 0:
+			_change(x, z, -SALT_MELT_CM)
+
+
 ## Sataa lunta koko pihalle, mutta vain soluihin, joissa lunta on alle max_depth_cm.
 func add_snow_everywhere(depth_cm: int, max_depth_cm: int) -> void:
 	for z in CELLS_Z:
 		for x in CELLS_X:
 			var room := max_depth_cm - _cell(x, z)
-			if room > 0:
+			if room > 0 and not is_salted(x, z):
 				_change(x, z, mini(depth_cm, room))
 
 
