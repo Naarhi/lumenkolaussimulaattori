@@ -93,7 +93,7 @@ func _build_menu() -> void:
 	box.add_child(_menu_message)
 
 	_name = LineEdit.new()
-	_name.text = "Kolaaja%d" % randi_range(100, 999)
+	_name.text = Net.cli.get("name", "Kolaaja%d" % randi_range(100, 999))
 	_name.placeholder_text = "nimesi"
 	_name.max_length = 16
 	box.add_child(_name)
