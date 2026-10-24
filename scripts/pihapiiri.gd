@@ -184,7 +184,7 @@ static func _plots() -> Array:
 	var holes := []
 	for i in Village.NEIGHBOURS.size():
 		var n: Dictionary = Village.NEIGHBOURS[i]
-		holes.append(Rect2(n["x"] - n["w"] * 0.5, Village.ROAD_FAR, n["w"], n["d"]))
+		holes.append(Rect2(n["x"] - n["w"] * 0.5, Village.ROAD_FAR, Village.neighbour_field_width(i), n["d"]))
 	for shop in Village.SHOPS:
 		holes.append(Rect2(shop["x"] - 6.0, Village.ROAD_FAR, 12.0, Village.SHOP_SETBACK + 1.0))
 	holes.sort_custom(func(a: Rect2, b: Rect2): return a.position.x < b.position.x)
@@ -552,6 +552,15 @@ static func _neighbour(world: Node3D, index: int) -> void:
 	var x: float = n["x"]
 	var far_end: float = Village.ROAD_FAR + n["d"]
 	_gravel(world, Rect2(x - n["w"] * 0.5, Village.ROAD_FAR, n["w"], n["d"]))
+	# Lumikasan kaista: nurmikkoa lumen alla ja aurausviitat kasan paikan merkkinä.
+	var lawn := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(Village.PILE_STRIP, n["d"])
+	lawn.mesh = plane
+	lawn.material_override = _mat(Color(0.25, 0.3, 0.2), 1.0)
+	lawn.position = Vector3(x + n["w"] * 0.5 + Village.PILE_STRIP * 0.5, 0.004, Village.ROAD_FAR + n["d"] * 0.5)
+	world.add_child(lawn)
+	_pile_marker(world, Village.pile_center(index))
 	# Pieni mökki pihatien päässä, ovi tielle päin.
 	var house := Node3D.new()
 	house.name = "Naapuri%d" % index
@@ -583,7 +592,7 @@ static func _neighbour(world: Node3D, index: int) -> void:
 	lamp.position = Vector3(-0.2, 2.4, d * 0.5 + 0.5)
 	house.add_child(lamp)
 	# Postilaatikko ja nimikyltti tien varressa
-	var box_at := Vector3(x + n["w"] * 0.5 + 0.6, 0, Village.ROAD_FAR + 0.5)
+	var box_at := Vector3(x - n["w"] * 0.5 - 0.6, 0, Village.ROAD_FAR + 0.5)
 	_mailbox(world, box_at)
 	var sign := Label3D.new()
 	sign.text = "%s\n%d € kolauksesta" % [n["name"], n["pay"]]
@@ -593,6 +602,26 @@ static func _neighbour(world: Node3D, index: int) -> void:
 	sign.modulate = Color(1.0, 0.95, 0.75)
 	sign.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	sign.position = box_at + Vector3(0, 2.0, 0)
+	world.add_child(sign)
+
+
+## Neljä punaoranssia aurausviittaa kasan ympärillä ja kyltti "LUMIKASA".
+static func _pile_marker(world: Node3D, center: Vector3) -> void:
+	for i in 4:
+		var angle := i * TAU / 4.0 + PI / 4.0
+		var at := center + Vector3(cos(angle), 0, sin(angle)) * (Village.PILE_RADIUS + 0.1)
+		var pole := _box(world, Vector3(0.05, 2.2, 0.05), at + Vector3(0, 1.1, 0), Color(0.95, 0.35, 0.05), 0.5)
+		pole.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for y in [0.6, 1.2, 1.8]:
+			_box(world, Vector3(0.06, 0.12, 0.06), at + Vector3(0, y, 0), Color(0.95, 0.95, 0.9), 0.5)
+	var sign := Label3D.new()
+	sign.text = "LUMIKASA"
+	sign.font_size = 48
+	sign.pixel_size = 0.006
+	sign.outline_size = 10
+	sign.modulate = Color(1.0, 0.6, 0.2)
+	sign.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	sign.position = center + Vector3(0, 2.6, 0)
 	world.add_child(sign)
 
 

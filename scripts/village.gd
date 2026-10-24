@@ -20,6 +20,11 @@ const NEIGHBOURS := [
 const CLEARED_FRACTION := 0.88
 const CLEARED_CM := 4
 const NEIGHBOUR_START_CM := 20
+## Pihatien vieressä on kaista, jonka keskelle kaikki lumi pitää kasata (lumikasan paikka).
+const PILE_STRIP := 4.8
+const PILE_RADIUS := 2.0
+## Naapuri maksaa vähintään tämän osan, vaikka lumet olisi heitelty minne sattuu.
+const MIN_PAY_SHARE := 0.3
 
 ## Naavaa kasvaa näin monen pihaa lähimmän matalan kuusen alla. Hirvi lähtee vain naavalla.
 const NAAVA_TREES := 8
@@ -72,3 +77,13 @@ static func item_for_tool(tool: int) -> String:
 static func neighbour_origin(index: int) -> Vector3:
 	var n: Dictionary = NEIGHBOURS[index]
 	return Vector3(n["x"] - n["w"] * 0.5, 0.0, ROAD_FAR)
+
+
+## Naapurin lumikentän leveys: pihatie ja lumikasan kaista sen itäpuolella.
+static func neighbour_field_width(index: int) -> float:
+	return NEIGHBOURS[index]["w"] + PILE_STRIP
+
+
+static func pile_center(index: int) -> Vector3:
+	var n: Dictionary = NEIGHBOURS[index]
+	return Vector3(n["x"] + n["w"] * 0.5 + PILE_STRIP * 0.5, 0.0, ROAD_FAR + n["d"] * 0.5)

@@ -23,6 +23,10 @@ var cells_z := 192
 var chunks_x := 12
 var chunks_z := 12
 var initial_depth := INITIAL_DEPTH_CM
+## Sataako tälle kentälle lunta (kotipiha pysyy puhtaana).
+var snowfall := true
+## Palvelin: sulatettu lumi (liekinheitin ja suola), jotta naapuri tietää, minne lumet menivät.
+var melted_total := 0
 var heights := PackedByteArray()
 var material: StandardMaterial3D
 
@@ -125,7 +129,8 @@ func _physics_process(delta: float) -> void:
 	if _snowfall_acc >= 1.0:
 		var whole := int(_snowfall_acc)
 		_snowfall_acc -= whole
-		add_snow_everywhere(whole, SNOWFALL_MAX_DEPTH_CM)
+		if snowfall:
+			add_snow_everywhere(whole, SNOWFALL_MAX_DEPTH_CM)
 	melt_salted(delta)
 	_flush_dirty()
 
@@ -196,7 +201,7 @@ func melt_salted(delta: float) -> void:
 		@warning_ignore("integer_division")
 		var z: int = index / cells_x
 		if heights[index] > 0:
-			_change(x, z, -SALT_MELT_CM)
+			melted_total -= _change(x, z, -SALT_MELT_CM)
 
 
 ## Sataa lunta koko pihalle, mutta vain soluihin, joissa lunta on alle max_depth_cm.
@@ -247,6 +252,41 @@ func fraction_cleared(max_cm: int) -> float:
 		if h <= max_cm:
 			clear += 1
 	return float(clear) / maxf(heights.size(), 1)
+
+
+## Lunta solujen x0..x1, z0..z1 (mukaan lukien) alueella.
+func sum_rect(x0: int, x1: int, z0: int, z1: int) -> int:
+	var total := 0
+	for z in range(maxi(z0, 0), mini(z1, cells_z - 1) + 1):
+		for x in range(maxi(x0, 0), mini(x1, cells_x - 1) + 1):
+			total += heights[z * cells_x + x]
+	return total
+
+
+## Kuinka suuri osa alueen soluista on enintään max_cm syvyisiä.
+func fraction_cleared_rect(x0: int, x1: int, z0: int, z1: int, max_cm: int) -> float:
+	var clear := 0
+	var count := 0
+	for z in range(maxi(z0, 0), mini(z1, cells_z - 1) + 1):
+		for x in range(maxi(x0, 0), mini(x1, cells_x - 1) + 1):
+			count += 1
+			if heights[z * cells_x + x] <= max_cm:
+				clear += 1
+	return float(clear) / maxf(count, 1)
+
+
+## Lunta ympyrän alueella (lumikasa).
+func sum_circle(world_pos: Vector3, radius: float) -> int:
+	var total := 0
+	for cell in _cells_in_radius(world_pos, radius):
+		total += heights[cell.y * cells_x + cell.x]
+	return total
+
+
+## Tasoittaa ympyrän alueen annettuun syvyyteen (kasa ajettu pois).
+func flatten_circle(world_pos: Vector3, radius: float, depth_cm: int) -> void:
+	for cell in _cells_in_radius(world_pos, radius):
+		_change(cell.x, cell.y, depth_cm - heights[cell.y * cells_x + cell.x])
 
 
 ## Täyttää koko pihan vähintään depth_cm syvyiseksi (uusi tilaus naapurilta).

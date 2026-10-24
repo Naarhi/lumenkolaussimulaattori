@@ -74,7 +74,9 @@ var _autotest_started := false
 
 func _ready() -> void:
 	# Kotipiha ulottuu talon edestä tien reunaan asti, jotta aura-auton penkka on suoraan tien vieressä.
-	snow.setup(19.2, 9.6 + Village.ROAD_Z - Village.ROAD_HALF_WIDTH)
+	# Kotipiha on valmiiksi kolattu eikä sinne sada: työt tehdään naapureilla.
+	snow.setup(19.2, 9.6 + Village.ROAD_Z - Village.ROAD_HALF_WIDTH, 0)
+	snow.snowfall = false
 	snow.position = Vector3(-snow.size().x * 0.5, 0.0, -9.6)
 	dedicated = Net.cli.has("server") or OS.has_feature("dedicated_server")
 	neighbours = NeighboursScript.new()
@@ -298,11 +300,13 @@ func depth_at(pos: Vector3) -> float:
 
 
 ## Palvelin: poista lunta siltä kentältä, jolla piste on. Naapurin pihatiellä työ kirjataan pelaajalle.
-func _remove(peer: int, pos: Vector3, radius: float, max_amount: int, max_per_cell: int) -> int:
+func _remove(peer: int, pos: Vector3, radius: float, max_amount: int, max_per_cell: int, melt := false) -> int:
 	var field = field_at(pos)
 	if field == null:
 		return 0
 	var removed: int = field.remove_snow(pos, radius, max_amount, max_per_cell)
+	if melt:
+		field.melted_total += removed
 	if peer != 0:
 		neighbours.credit(field, peer, removed)
 	return removed
@@ -674,8 +678,8 @@ func _server_tools(delta: float) -> void:
 					_add(feet + throw_dir * 6.5, 1.0, blown)
 				xp = blown / 60.0
 			Tools.LIEKKI:
-				var melted := _remove(id, feet + forward * 1.6, 0.45, 100000, 3)
-				melted += _remove(id, feet + forward * 2.6, 0.6, 100000, 2)
+				var melted := _remove(id, feet + forward * 1.6, 0.45, 100000, 3, true)
+				melted += _remove(id, feet + forward * 2.6, 0.6, 100000, 2, true)
 				xp = melted / 90.0
 			Tools.SUOLA:
 				var spot := feet + forward * 1.2
@@ -769,6 +773,11 @@ func _run_autotest() -> void:
 	send_chat("Moi testistä!")
 	await get_tree().create_timer(1.0).timeout
 	var me = local_player()
+	# Kotipiha on puhdas, joten työkaluja testataan Kauppisten pihatiellä (jokainen omalla kohdallaan).
+	var test_field = neighbours.fields[2]
+	me.global_position = test_field.to_global(Vector3(1.2 + float(absi(multiplayer.get_unique_id()) % 3) * 2.0, 0.05, 5.5))
+	me.rotation.y = 0.0
+	await get_tree().create_timer(0.3).timeout
 	var tool := int(Net.cli.get("tool", "0"))
 	# Mittauspiste työkalun vaikutusalueelta (katse -Z-suuntaan).
 	var probe := {Tools.LAPIO: SHOVEL_REACH, Tools.MASI: 0.75, Tools.LINKO: 0.8, Tools.LIEKKI: 1.6, Tools.SUOLA: 1.2}[tool] as float
@@ -851,7 +860,7 @@ func _autotest_economy(me) -> bool:
 	var locked: bool = me.tool == Tools.LAPIO
 	var index := 2
 	var field = neighbours.fields[index]
-	me.global_position = field.to_global(Vector3(field.size().x * 0.5, 0.05, 3.0))
+	me.global_position = field.to_global(Vector3(Village.NEIGHBOURS[index]["w"] * 0.5, 0.05, 3.0))
 	me.rotation.y = 0.0
 	await get_tree().create_timer(0.3).timeout
 	for i in 4:
@@ -873,7 +882,10 @@ func _autotest_economy(me) -> bool:
 
 ## Aja moottorikelkalla tielle päin.
 func _autotest_sled(me) -> bool:
-	me.rotation.y = PI
+	# Ajetaan tietä pitkin länteen, jossa ei ole esteitä.
+	me.global_position = Vector3(0.0, 0.05, Village.ROAD_Z)
+	me.rotation.y = PI * 0.5
+	await get_tree().create_timer(0.3).timeout
 	var start: Vector3 = me.global_position
 	me.toggle_riding()
 	me.force_drive = true
