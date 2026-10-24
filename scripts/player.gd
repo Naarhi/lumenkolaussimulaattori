@@ -20,6 +20,7 @@ var shovel: Node3D
 var shovel_snow: MeshInstance3D
 
 var _body: Node3D
+var _nametag: Label3D
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _swing: Tween
 
@@ -48,6 +49,16 @@ func _init() -> void:
 	_body.name = "Body"
 	add_child(_body)
 
+	_nametag = Label3D.new()
+	_nametag.position.y = 2.15
+	_nametag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_nametag.font_size = 40
+	_nametag.pixel_size = 0.004
+	_nametag.outline_size = 10
+	_nametag.modulate = Color(1.0, 0.9, 0.2)
+	_nametag.no_depth_test = false
+	_body.add_child(_nametag)
+
 	shovel = _make_shovel()
 	head.add_child(shovel)
 
@@ -73,8 +84,16 @@ func _ready() -> void:
 		add_to_group("local_player")
 
 
+func set_display_name(player_name: String) -> void:
+	_nametag.text = player_name
+
+
+func _typing() -> bool:
+	return _main().hud.typing
+
+
 func _unhandled_input(event: InputEvent) -> void:
-	if not is_multiplayer_authority():
+	if not is_multiplayer_authority() or _typing():
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
@@ -93,14 +112,14 @@ func _physics_process(delta: float) -> void:
 		return
 	if not is_on_floor():
 		velocity.y -= _gravity * delta
-	elif Input.is_action_just_pressed("hyppy"):
+	elif Input.is_action_just_pressed("hyppy") and not _typing():
 		velocity.y = JUMP_VELOCITY
 
-	var input := Input.get_vector("vasen", "oikea", "eteen", "taakse")
+	var input := Vector2.ZERO if _typing() else Input.get_vector("vasen", "oikea", "eteen", "taakse")
 	var direction := (transform.basis * Vector3(input.x, 0.0, input.y)).normalized()
 	var depth: float = _main().snow.depth_at(global_position)
 	var speed := lerpf(WALK_SPEED, DEEP_SNOW_SPEED, clampf(depth / DEEP_SNOW_CM, 0.0, 1.0))
-	if Input.is_action_pressed("juokse"):
+	if Input.is_action_pressed("juokse") and not _typing():
 		speed *= RUN_MULTIPLIER
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed

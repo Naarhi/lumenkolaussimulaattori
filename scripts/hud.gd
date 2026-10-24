@@ -13,6 +13,10 @@ var xp := 0
 var _menu: Control
 var _menu_message: Label
 var _address: LineEdit
+var _name: LineEdit
+var _chat_input: LineEdit
+## Tosi, kun pelaaja kirjoittaa chattiin (liike ja lapio pois päältä).
+var typing := false
 var _status: Label
 var _game: Control
 var _chat: VBoxContainer
@@ -86,6 +90,12 @@ func _build_menu() -> void:
 	_menu_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(_menu_message)
 
+	_name = LineEdit.new()
+	_name.text = "Kolaaja%d" % randi_range(100, 999)
+	_name.placeholder_text = "nimesi"
+	_name.max_length = 16
+	box.add_child(_name)
+
 	_address = LineEdit.new()
 	_address.text = Net.DEFAULT_ADDRESS
 	_address.placeholder_text = "palvelimen osoite[:portti]"
@@ -96,7 +106,7 @@ func _build_menu() -> void:
 	box.add_child(_button("Yksinpeli", func(): _main().start_singleplayer()))
 	box.add_child(_button("Lopeta", func(): get_tree().quit()))
 
-	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää\nHiiri: kauho ja heitä lunta · Esc vapauttaa hiiren", 13, Color(0.8, 0.78, 0.7))
+	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\nHiiri: kauho ja heitä lunta · Esc vapauttaa hiiren", 13, Color(0.8, 0.78, 0.7))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(help)
 
@@ -105,6 +115,11 @@ func _build_menu() -> void:
 	_status.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_status.visible = false
 	add_child(_status)
+
+
+func player_name() -> String:
+	var n := _name.text.strip_edges()
+	return n if n != "" else "Kolaaja"
 
 
 func _main():
@@ -137,7 +152,15 @@ func _build_game_ui() -> void:
 	_chat = VBoxContainer.new()
 	_chat.alignment = BoxContainer.ALIGNMENT_END
 	_chat.add_theme_constant_override("separation", 1)
-	chat_panel.add_child(_chat)
+	var chat_box := VBoxContainer.new()
+	chat_panel.add_child(chat_box)
+	chat_box.add_child(_chat)
+	_chat_input = LineEdit.new()
+	_chat_input.placeholder_text = "Kirjoita viesti ja paina Enter"
+	_chat_input.max_length = 120
+	_chat_input.visible = false
+	_chat_input.text_submitted.connect(_on_chat_submitted)
+	chat_box.add_child(_chat_input)
 	chat("Tervetuloa pihalle. Kolaa lumet ennen kuin Pertti herää.", Color.WHITE)
 
 	# Taitopaneeli oikeaan yläkulmaan.
@@ -208,6 +231,32 @@ func chat(text: String, color := Color.WHITE) -> void:
 		var old := _chat.get_child(0)
 		_chat.remove_child(old)
 		old.queue_free()
+
+
+func _input(event: InputEvent) -> void:
+	if not _game.visible or not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	if not typing and event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_T]:
+		typing = true
+		_chat_input.visible = true
+		_chat_input.text = ""
+		_chat_input.grab_focus.call_deferred()
+		get_viewport().set_input_as_handled()
+	elif typing and event.physical_keycode == KEY_ESCAPE:
+		_close_chat()
+		get_viewport().set_input_as_handled()
+
+
+func _on_chat_submitted(text: String) -> void:
+	_close_chat()
+	if text.strip_edges() != "":
+		_main().send_chat(text)
+
+
+func _close_chat() -> void:
+	typing = false
+	_chat_input.release_focus()
+	_chat_input.visible = false
 
 
 func level_up_popup(level: int) -> void:
