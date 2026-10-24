@@ -2,6 +2,7 @@ extends CanvasLayer
 ## Käyttöliittymä: päävalikko, OSRS-tyylinen chat-laatikko, taitopaneeli ja tasonnousu.
 
 const Skills := preload("res://scripts/skills.gd")
+const Tools := preload("res://scripts/tools.gd")
 
 const OSRS_BROWN := Color(0.24, 0.2, 0.15, 0.92)
 const OSRS_BORDER := Color(0.1, 0.08, 0.05)
@@ -24,6 +25,7 @@ var _skill_label: Label
 var _xp_bar: ProgressBar
 var _carry_label: Label
 var _popup: Label
+var _tool_labels: Array[Label] = []
 
 
 func _ready() -> void:
@@ -106,7 +108,7 @@ func _build_menu() -> void:
 	box.add_child(_button("Yksinpeli", func(): _main().start_singleplayer()))
 	box.add_child(_button("Lopeta", func(): get_tree().quit()))
 
-	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\nHiiri: kauho ja heitä lunta · Esc vapauttaa hiiren", 13, Color(0.8, 0.78, 0.7))
+	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · Esc vapauttaa hiiren", 13, Color(0.8, 0.78, 0.7))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(help)
 
@@ -191,6 +193,24 @@ func _build_game_ui() -> void:
 	set_xp(0)
 	set_carrying(0)
 
+	# Työkalupalkki alas keskelle
+	var bar_panel := PanelContainer.new()
+	bar_panel.add_theme_stylebox_override("panel", _osrs_box())
+	bar_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	bar_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	bar_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	bar_panel.position.y = -12
+	bar_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_game.add_child(bar_panel)
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 18)
+	bar_panel.add_child(bar)
+	for i in Tools.COUNT:
+		var l := _label("%d %s" % [i + 1, Tools.NAMES[i]], 15, Color.WHITE)
+		bar.add_child(l)
+		_tool_labels.append(l)
+	set_tool(0)
+
 	_popup = _label("", 36, OSRS_YELLOW)
 	_popup.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_popup.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -213,6 +233,11 @@ func set_xp(value: int) -> void:
 		var high := Skills.xp_for_level(level + 1)
 		_xp_bar.value = 100.0 * float(xp - low) / float(high - low)
 	_skill_label.tooltip_text = "Seuraavaan tasoon %d XP" % (Skills.xp_for_level(level + 1) - xp)
+
+
+func set_tool(index: int) -> void:
+	for i in _tool_labels.size():
+		_tool_labels[i].add_theme_color_override("font_color", OSRS_YELLOW if i == index else Color(0.75, 0.72, 0.65))
 
 
 func set_carrying(amount: int) -> void:
