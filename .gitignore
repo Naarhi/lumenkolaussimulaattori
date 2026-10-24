@@ -1,23 +1,8 @@
-# Unreal Engine
-Binaries/
-DerivedDataCache/
-Intermediate/
-Saved/
-Build/
-.vs/
-.vscode/
-.idea/
-*.sln
-*.VC.db
-*.opensdf
-*.opendb
-*.sdf
-*.suo
-*.xcodeproj
-*.xcworkspace
-Plugins/*/Binaries/
-Plugins/*/Intermediate/
+# Godot
+.godot/
+*.translation
+export_credentials.cfg
 
-# Paketoidut buildit
-Out/
-Packaged/
+# Buildit
+build/
+*.tmp

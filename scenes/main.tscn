@@ -1,0 +1,23 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/snow_field.gd" id="2_snow"]
+[ext_resource type="Script" path="res://scripts/random_events.gd" id="3_events"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="SnowField" type="Node3D" parent="."]
+script = ExtResource("2_snow")
+
+[node name="Players" type="Node3D" parent="."]
+
+[node name="Spawner" type="MultiplayerSpawner" parent="."]
+spawn_path = NodePath("../Players")
+
+[node name="Events" type="Node" parent="."]
+script = ExtResource("3_events")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("4_hud")
