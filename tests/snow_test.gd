@@ -12,7 +12,7 @@ func _initialize() -> void:
 
 
 func _run(snow) -> void:
-	snow.heights.resize(SnowField.CELLS_X * SnowField.CELLS_Z)
+	snow.heights.resize(snow.cells_x * snow.cells_z)
 	snow.heights.fill(SnowField.INITIAL_DEPTH_CM)
 	# Vuorokauden lumisade ja kymmenen myräkkää.
 	for i in 24 * 60:
@@ -27,7 +27,7 @@ func _run(snow) -> void:
 		snow.melt_salted(1.0 / 30.0)
 		if i % 30 == 0:
 			snow.add_snow_everywhere(1, SnowField.SNOWFALL_MAX_DEPTH_CM)
-	var salted_depth: int = snow.heights[10 * SnowField.CELLS_X + 10]
+	var salted_depth: int = snow.heights[10 * snow.cells_x + 10]
 	print("LUMITESTI suolattu kohta minuutin jälkeen %d cm" % salted_depth)
 	var ok := salted_depth == 0 and after_snowfall == SnowField.SNOWFALL_MAX_DEPTH_CM and after_storms == SnowField.STORM_MAX_DEPTH_CM
 	print("LUMITESTI sateen jälkeen %d cm, myräkkien jälkeen %d cm: %s" % [after_snowfall, after_storms, "OK" if ok else "FAIL"])

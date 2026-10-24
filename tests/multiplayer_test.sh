@@ -46,15 +46,37 @@ else
 fi
 
 # Pertti tuo Jallu-colaa, ja sen juominen antaa boostin.
-if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 20)) --autotest --jallu --save="$LOG/tool.json" >"$LOG/jallu.log" 2>&1; then
+if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 20)) --autotest --jallu --give --save="$LOG/tool.json" >"$LOG/jallu.log" 2>&1; then
 	grep "Jallu-cola:" "$LOG/jallu.log"
 else
 	echo "Jallu-cola epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/jallu.log" | head -5; fail=1
 fi
 
+# Naapuri maksaa kolauksesta ja rahalla saa rautakaupasta MASI-kolan.
+if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 21)) --autotest --economy --save="$LOG/talous.json" >"$LOG/economy.log" 2>&1; then
+	grep "Talous:" "$LOG/economy.log"
+	grep -q '"masi"' "$LOG/talous.json" || { echo "Ostos ei tallentunut"; fail=1; }
+else
+	echo "Talous epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/economy.log" | head -5; fail=1
+fi
+
+# Hirvi potkii tyhjin käsin tulevaa ja lähtee naavalla.
+if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 23)) --autotest --hirvi --save="$LOG/tool.json" >"$LOG/moose.log" 2>&1; then
+	grep "Hirvi:" "$LOG/moose.log"
+else
+	echo "Hirvi epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/moose.log" | head -5; fail=1
+fi
+
+# Moottorikelkalla pääsee ajamaan.
+if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 22)) --autotest --kelkka --give --save="$LOG/tool.json" >"$LOG/sled.log" 2>&1; then
+	grep "Moottorikelkka:" "$LOG/sled.log"
+else
+	echo "Moottorikelkka epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/sled.log" | head -5; fail=1
+fi
+
 # Jokainen työkalu yksinpelissä
 for t in 1 2 3 4; do
-	if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 10 + t)) --autotest --tool=$t --save="$LOG/tool.json" >"$LOG/tool$t.log" 2>&1; then
+	if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 10 + t)) --autotest --tool=$t --give --save="$LOG/tool.json" >"$LOG/tool$t.log" 2>&1; then
 		grep "AUTOTEST .*lumi" "$LOG/tool$t.log"
 	else
 		echo "Työkalu $t epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/tool$t.log" | head -5; fail=1
