@@ -47,7 +47,8 @@ void ASnowField::PostInitializeComponents()
 	NumChunksY = FMath::DivideAndRoundUp(CellsY, ChunkSize);
 	ChunkToItem.Init(INDEX_NONE, NumChunksX * NumChunksY);
 
-	UKismetProceduralMeshLibrary::CreateGridMeshTriangles(ChunkSize + 1, ChunkSize + 1, true, GridTriangles);
+	// Winding false: kolmiot osoittavat ylöspäin, kun verteksit ovat X-pääjärjestyksessä.
+	UKismetProceduralMeshLibrary::CreateGridMeshTriangles(ChunkSize + 1, ChunkSize + 1, false, GridTriangles);
 
 	ActiveSnowMaterial = SnowMaterial;
 	if (!ActiveSnowMaterial && FallbackBaseMaterial && !IsNetMode(NM_DedicatedServer))
