@@ -649,7 +649,8 @@ static func _shop(world: Node3D, index: int) -> void:
 	if index == Village.RAUTAKAUPPA:
 		var masi := Tools.make_masi()
 		masi.position = Vector3(x + 2.6, 0, counter.z + 0.6)
-		masi.rotation_degrees.y = 160
+		# Terä tielle päin, ettei kola uppoa kaupan seinään.
+		masi.rotation_degrees.y = 20
 		world.add_child(masi)
 		for i in 3:
 			_box(world, Vector3(0.5, 0.25, 0.35), Vector3(x - 2.6, 0.13 + i * 0.26, counter.z + 0.7), Color(0.9, 0.9, 0.85) if i % 2 == 0 else Color(0.2, 0.45, 0.8), 0.9)

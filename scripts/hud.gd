@@ -70,6 +70,7 @@ func show_menu(main, message := "") -> void:
 	close_shop(false)
 	_menu.visible = true
 	_game.visible = false
+	Music.set_playing(true)
 	_status.visible = false
 	_menu_message.text = message
 	_menu_message.visible = message != ""
@@ -78,6 +79,7 @@ func show_menu(main, message := "") -> void:
 
 func hide_menu() -> void:
 	_menu.visible = false
+	Music.set_playing(false)
 	_status.visible = false
 
 

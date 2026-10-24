@@ -51,6 +51,8 @@ var _player: AudioStreamPlayer
 var _thread: Thread
 var _buf := PackedFloat32Array()
 var _rng := RandomNumberGenerator.new()
+## Musiikki soi vain päävalikossa. Pelin aikana kuuluvat vain pihan äänet.
+var _wanted := true
 
 
 func _ready() -> void:
@@ -120,7 +122,24 @@ func _start(stream: AudioStreamWAV) -> void:
 	if Net.cli.has("music-wav"):
 		stream.save_to_wav(Net.cli["music-wav"])
 	_player.stream = stream
-	_player.play()
+	if _wanted:
+		_player.play()
+
+
+## Päävalikko käynnistää musiikin, peliin siirtyminen hiljentää sen.
+func set_playing(on: bool) -> void:
+	_wanted = on
+	if _player == null or _player.stream == null:
+		return
+	var tween := create_tween()
+	if on:
+		if not _player.playing:
+			_player.volume_db = -30.0
+			_player.play()
+		tween.tween_property(_player, "volume_db", -4.0, 1.0)
+	elif _player.playing:
+		tween.tween_property(_player, "volume_db", -40.0, 1.0)
+		tween.tween_callback(_player.stop)
 
 
 func _exit_tree() -> void:
