@@ -149,7 +149,7 @@ func set_display_name(player_name: String, level: int) -> void:
 
 
 func _typing() -> bool:
-	return _main().hud.typing
+	return _main().hud.blocks_input()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -167,8 +167,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		select_tool(event.physical_keycode - KEY_1)
 	elif event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 		select_tool(tool + (1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1))
-	elif event.is_action_pressed("ui_cancel"):
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
 func _physics_process(delta: float) -> void:

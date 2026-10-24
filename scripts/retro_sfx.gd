@@ -4,6 +4,8 @@ extends Node
 enum { SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE }
 
 const MIX_RATE := 22050
+const BUS := "Efektit"
+const SETTINGS_PATH := "user://asetukset.cfg"
 
 var _streams := {}
 # Packed-taulukot välitetään arvona, joten syntetisaattori kirjoittaa tähän jäsenmuuttujaan.
@@ -11,12 +13,48 @@ var _buf := PackedFloat32Array()
 
 
 func _ready() -> void:
+	_setup_buses()
 	for kind in [SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE]:
 		_streams[kind] = _make_stream(kind)
 
 
+# --- Äänenvoimakkuudet -------------------------------------------------------------
+
+func _setup_buses() -> void:
+	var config := ConfigFile.new()
+	config.load(SETTINGS_PATH)
+	for bus_name in [BUS, Music.BUS]:
+		if AudioServer.get_bus_index(bus_name) == -1:
+			AudioServer.add_bus()
+			AudioServer.set_bus_name(AudioServer.bus_count - 1, bus_name)
+			AudioServer.set_bus_send(AudioServer.bus_count - 1, "Master")
+		_apply_volume(bus_name, config.get_value("aanet", bus_name, 0.8))
+
+
+## Äänenvoimakkuus 0..1 väylälle "Efektit" tai "Musiikki". Tallennetaan asetuksiin.
+func set_volume(bus_name: String, linear: float) -> void:
+	_apply_volume(bus_name, linear)
+	var config := ConfigFile.new()
+	config.load(SETTINGS_PATH)
+	config.set_value("aanet", bus_name, linear)
+	config.save(SETTINGS_PATH)
+
+
+func get_volume(bus_name: String) -> float:
+	return db_to_linear(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(bus_name)))
+
+
+func _apply_volume(bus_name: String, linear: float) -> void:
+	var index := AudioServer.get_bus_index(bus_name)
+	AudioServer.set_bus_volume_db(index, linear_to_db(maxf(linear, 0.0001)))
+	AudioServer.set_bus_mute(index, linear <= 0.001)
+
+
+# --- Toisto -------------------------------------------------------------------------
+
 func play_at(kind: int, world_position: Vector3, parent: Node) -> void:
 	var player := AudioStreamPlayer3D.new()
+	player.bus = BUS
 	player.stream = _streams[kind]
 	player.unit_size = 6.0
 	parent.add_child(player)
@@ -27,6 +65,7 @@ func play_at(kind: int, world_position: Vector3, parent: Node) -> void:
 
 func play_2d(kind: int) -> void:
 	var player := AudioStreamPlayer.new()
+	player.bus = BUS
 	player.stream = _streams[kind]
 	add_child(player)
 	player.finished.connect(player.queue_free)
