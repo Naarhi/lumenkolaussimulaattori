@@ -683,7 +683,7 @@ static func _shop(world: Node3D, index: int) -> void:
 		world.add_child(masi)
 		for i in 3:
 			_box(world, Vector3(0.5, 0.25, 0.35), Vector3(x - 2.6, 0.13 + i * 0.26, counter.z + 0.7), Color(0.9, 0.9, 0.85) if i % 2 == 0 else Color(0.2, 0.45, 0.8), 0.9)
-	else:
+	elif index == Village.KONELIIKE:
 		var sled := make_snowmobile(false)
 		sled.position = Vector3(x + 3.2, 0.05, counter.z + 0.4)
 		sled.rotation_degrees.y = -70
@@ -692,6 +692,24 @@ static func _shop(world: Node3D, index: int) -> void:
 		blower.position = Vector3(x - 2.8, 0, counter.z + 1.3)
 		blower.rotation_degrees.y = 200
 		world.add_child(blower)
+	else:
+		# Ilmoitustaulu ja telineessä lapioita odottamassa duunareita
+		_box(world, Vector3(1.6, 1.1, 0.08), Vector3(x + 3.0, 1.4, counter.z + 1.0), Color(0.45, 0.3, 0.18), 0.9)
+		_box(world, Vector3(1.4, 0.9, 0.02), Vector3(x + 3.0, 1.4, counter.z + 0.95), Color(0.92, 0.9, 0.82), 0.9)
+		for px in [-0.6, 0.6]:
+			_box(world, Vector3(0.08, 1.9, 0.08), Vector3(x + 3.0 + px, 0.95, counter.z + 1.05), Color(0.45, 0.3, 0.18), 0.9)
+		var note := Label3D.new()
+		note.text = "TÖITÄ TARJOLLA\nlumitöihin reippaita\nkolaajia, kysy sisältä!"
+		note.font_size = 40
+		note.pixel_size = 0.004
+		note.modulate = Color(0.15, 0.15, 0.2)
+		note.position = Vector3(x + 3.0, 1.4, counter.z + 0.93)
+		note.rotation_degrees.y = 180
+		world.add_child(note)
+		for i in 4:
+			var sx := x - 3.4 + i * 0.5
+			_box(world, Vector3(0.05, 1.3, 0.05), Vector3(sx, 0.85, counter.z + 1.3), Color(0.7, 0.55, 0.3), 0.8)
+			_box(world, Vector3(0.38, 0.4, 0.04), Vector3(sx, 0.2, counter.z + 1.28), Color(0.15, 0.35, 0.8) if i % 2 == 0 else Color(0.9, 0.5, 0.1), 0.7)
 
 
 # --- Satunnaistapahtumien hahmot ---------------------------------------------------

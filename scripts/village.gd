@@ -31,26 +31,30 @@ const NAAVA_TREES := 8
 const NAAVA_RANGE := 1.8
 const NAAVA_REGROW := 120.0
 
-enum { RAUTAKAUPPA, KONELIIKE }
+enum { RAUTAKAUPPA, KONELIIKE, TYONVALITYS }
 
 ## Kaupat tien eteläpuolella. counter on tiskin paikka (seiso tässä ja paina E).
 const SHOPS := [
 	{"name": "Rautakauppa", "from": "rautakaupasta", "where": "tien länsipäässä", "x": -42.0, "color": Color(0.15, 0.35, 0.65)},
 	{"name": "Koneliike", "from": "koneliikkeestä", "where": "tien itäpäässä", "x": 46.0, "color": Color(0.8, 0.45, 0.05)},
+	{"name": "Työnvälitys", "from": "työnvälityksestä", "where": "kotipihaa vastapäätä", "x": -3.0, "color": Color(0.2, 0.55, 0.3)},
 ]
 const SHOP_RANGE := 3.0
 ## Kaupan oven etäisyys tien reunasta.
 const SHOP_SETBACK := 3.5
 
 ## Myytävät tavarat. tool kertoo, minkä työkalun ostos avaa. salt on suolakiloja.
+## Duunareilla (worker) price on palkkausmaksu ja wage palkka minuutissa. speed ja capacity kertovat, miten reippaasti duunari kolaa.
 const ITEMS := {
 	"masi": {"name": "MASI-lumikola", "price": 35, "shop": RAUTAKAUPPA, "tool": Tools.MASI},
 	"suola": {"name": "Suolasäkki 10 kg", "price": 8, "shop": RAUTAKAUPPA, "salt": 10.0},
 	"linko": {"name": "Lumilinko", "price": 220, "shop": KONELIIKE, "tool": Tools.LINKO},
 	"kelkka": {"name": "Moottorikelkka", "price": 350, "shop": KONELIIKE},
 	"liekki": {"name": "Liekinheitin", "price": 600, "shop": KONELIIKE, "tool": Tools.LIEKKI},
+	"jussi": {"name": "Kesätyöläinen Jussi", "worker": "Jussi", "price": 10, "wage": 2, "speed": 0.85, "capacity": 1500, "shop": TYONVALITYS, "color": Color(0.95, 0.55, 0.1)},
+	"raili": {"name": "Konkari Raili", "worker": "Raili", "price": 40, "wage": 5, "speed": 1.2, "capacity": 3000, "shop": TYONVALITYS, "color": Color(0.35, 0.3, 0.75)},
 }
-const ITEM_ORDER := ["masi", "suola", "linko", "kelkka", "liekki"]
+const ITEM_ORDER := ["masi", "suola", "linko", "kelkka", "liekki", "jussi", "raili"]
 
 
 static func counter_position(shop: int) -> Vector3:
