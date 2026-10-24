@@ -1,7 +1,7 @@
 extends Node
 ## OSRS:n "random eventien" tapaiset hullut sattumukset. Palvelin arpoo, kaikki näkevät saman.
 
-enum { AURA_AUTO, LUMIMYRSKY, HIRVI, PERTTI, KATTOLUMI, JALLU }
+enum { AURA_AUTO, LUMIMYRSKY, HIRVI, PERTTI, KATTOLUMI, JALLU, LUMIUKKO }
 
 const Pihapiiri := preload("res://scripts/pihapiiri.gd")
 const Village := preload("res://scripts/village.gd")
@@ -9,11 +9,15 @@ const Village := preload("res://scripts/village.gd")
 const EVENTS := [
 	{"type": AURA_AUTO, "weight": 3.0, "text": "Kunnan aura-auto jyrisi ohi ja puski penkan pihatielle!"},
 	{"type": LUMIMYRSKY, "weight": 2.0, "text": "Lumimyräkkä yllätti! Naapurien pihateille sataa lunta silmissä."},
-	{"type": HIRVI, "weight": 1.0, "text": "Hirvi käveli pihalle eikä lähde ilman naavaa! Naavaa kasvaa kuusten alla. Älä mene lähelle tyhjin käsin."},
+	{"type": HIRVI, "weight": 1.0, "text": "Hirvi käveli naapurin pihatielle eikä lähde ilman naavaa! Naavaa kasvaa kuusten alla. Älä mene lähelle tyhjin käsin."},
 	{"type": PERTTI, "weight": 2.0, "text": "Naapurin Pertti kävi moottorikelkalla \"auttamassa\". Naapurien pihateillä on nyt lumikasoja."},
 	{"type": KATTOLUMI, "weight": 2.0, "text": "Katolta romahti lumikuorma kolaajan niskaan!"},
-	{"type": JALLU, "weight": 2.0, "text": "Pertti kurvasi pihaan ja jätti Jallu-colaa! Mene pullon luo ja paina E."},
+	{"type": JALLU, "weight": 2.0, "text": "Pertti kurvasi kylään ja jätti Jallu-colaa naapurien pihateille! Mene pullon luo ja paina E."},
+	{"type": LUMIUKKO, "weight": 2.0, "text": "Kylän lapset rakensivat lumiukon keskelle naapurin pihatietä! Kolaa se pois."},
 ]
+## Lumiukko kaatuu, kun sen alla on lunta enää tämän verran (cm).
+const SNOWMAN_FALL_CM := 25
+const SNOWMAN_XP := 30
 const BOTTLES_PER_DELIVERY := 3
 const BOTTLE_LIFETIME := 180.0
 const DRINK_DISTANCE := 1.6
@@ -38,6 +42,10 @@ var moose_active := false
 var moose_pos := Vector3.ZERO
 var _moose_node: Node3D
 var _moose_left_at := 0.0
+## Lumiukot {id: sijainti}. Palvelin päättää, asiakkaat näyttävät.
+var snowmen := {}
+var _snowman_nodes := {}
+var _next_snowman := 1
 var _last_kick := {}
 var _kick_check := 0.0
 ## Naavapuut [puu, poimintapaikka, korkeus], onko naavaa poimittavissa ja ketkä kantavat naavaa.
@@ -103,7 +111,8 @@ func trigger(type: int) -> void:
 		HIRVI:
 			if moose_active:
 				return
-			point = snow.random_point()
+			# Hirvi tulee sinne, missä kolataan: jonkun naapurin pihatielle.
+			point = main.neighbours.fields.pick_random().random_point()
 			_cl_moose.rpc(true, point, randf() * TAU)
 			_moose_left_at = Time.get_ticks_msec() / 1000.0 + MOOSE_MAX_STAY
 		PERTTI:
@@ -120,9 +129,19 @@ func trigger(type: int) -> void:
 			for i in BOTTLES_PER_DELIVERY:
 				var id := _next_bottle
 				_next_bottle += 1
-				var spot: Vector3 = snow.random_point()
+				var spot: Vector3 = main.neighbours.fields.pick_random().random_point()
 				_cl_bottle.rpc(id, spot)
 				get_tree().create_timer(BOTTLE_LIFETIME).timeout.connect(func(): if bottles.has(id): _cl_remove_bottle.rpc(id))
+		LUMIUKKO:
+			var index: int = randi() % main.neighbours.fields.size()
+			var field = main.neighbours.fields[index]
+			var n: Dictionary = Village.NEIGHBOURS[index]
+			# Keskelle pihatietä, ei lumikasan kaistalle.
+			point = field.to_global(Vector3(n["w"] * randf_range(0.3, 0.7), 0.0, n["d"] * randf_range(0.3, 0.7)))
+			field.add_snow(point, 0.8, 9000)
+			var id := _next_snowman
+			_next_snowman += 1
+			_cl_snowman.rpc(id, point)
 	for e in EVENTS:
 		if e["type"] == type:
 			main.announce(e["text"])
@@ -173,6 +192,52 @@ func send_state(peer: int) -> void:
 			_cl_naava.rpc_id(peer, i, false)
 	for p in carrying_naava:
 		_cl_carry_naava.rpc_id(peer, p, true)
+	for id in snowmen:
+		_cl_snowman.rpc_id(peer, id, snowmen[id])
+
+
+## Palvelin: lumiukko kaatuu, kun sen alta on kolattu lumet. Lähin kolaaja saa kunnian.
+func _check_snowmen() -> void:
+	var main = get_parent()
+	for id in snowmen.keys():
+		if main.depth_at(snowmen[id]) > SNOWMAN_FALL_CM:
+			continue
+		var best := -1
+		var best_dist := 4.0
+		for player in main.players.get_children():
+			var d: float = player.global_position.distance_to(snowmen[id])
+			if d < best_dist:
+				best_dist = d
+				best = int(String(player.name))
+		_cl_snowman_fall.rpc(id)
+		if best >= 0:
+			main._add_xp(best, SNOWMAN_XP)
+			main.announce("%s kaatoi lasten lumiukon. Porkkana lensi hankeen!" % main.display_name_for(best)[0])
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_snowman(id: int, pos: Vector3) -> void:
+	snowmen[id] = pos
+	if DisplayServer.get_name() == "headless" or _snowman_nodes.has(id):
+		return
+	var node := Pihapiiri.make_snowman()
+	get_parent().add_child(node)
+	node.position = pos + Vector3(0, 0.5, 0)
+	node.rotation.y = randf() * TAU
+	_snowman_nodes[id] = node
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_snowman_fall(id: int) -> void:
+	snowmen.erase(id)
+	if not _snowman_nodes.has(id):
+		return
+	var node: Node3D = _snowman_nodes[id]
+	_snowman_nodes.erase(id)
+	var tween := create_tween()
+	tween.tween_property(node, "rotation:x", PI * 0.5, 0.6).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(node, "scale", Vector3(1, 0.05, 1), 0.8)
+	tween.tween_callback(node.queue_free)
 
 
 @rpc("authority", "call_local", "reliable")
@@ -290,6 +355,7 @@ func _physics_process(delta: float) -> void:
 		return
 	if _truck_started >= 0.0:
 		_check_truck()
+	_check_snowmen()
 	if not moose_active:
 		return
 	if Time.get_ticks_msec() / 1000.0 > _moose_left_at:

@@ -81,6 +81,13 @@ else
 	echo "Duunarit epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/workers.log" | head -5; fail=1
 fi
 
+# Lasten lumiukko kaatuu, kun lumet kolataan sen alta.
+if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 34)) --autotest --lumiukko --save="$LOG/tool.json" >"$LOG/snowman.log" 2>&1; then
+	grep "Lumiukko:" "$LOG/snowman.log"
+else
+	echo "Lumiukko epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/snowman.log" | head -5; fail=1
+fi
+
 # Lumipallo osuu ja ohi menevä putoaa maahan.
 if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 32)) --autotest --lumipallo --save="$LOG/tool.json" >"$LOG/snowball.log" 2>&1; then
 	grep "Lumipallo:" "$LOG/snowball.log"

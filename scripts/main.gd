@@ -994,6 +994,9 @@ func _run_autotest() -> void:
 	var dance_ok := true
 	if Net.cli.has("tanssi"):
 		dance_ok = await _autotest_dance(me)
+	var snowman_ok := true
+	if Net.cli.has("lumiukko") and multiplayer.is_server():
+		snowman_ok = await _autotest_snowman(me)
 	var snowball_ok := true
 	if Net.cli.has("lumipallo") and multiplayer.is_server():
 		snowball_ok = await _autotest_snowball(me)
@@ -1035,6 +1038,11 @@ func _run_autotest() -> void:
 			hud._open_pause()
 		if Net.cli.has("event") and multiplayer.is_server():
 			events.trigger(int(Net.cli["event"]))
+			if not events.snowmen.is_empty():
+				await get_tree().create_timer(0.2).timeout
+				me.global_position = events.snowmen.values()[0] + Vector3(0, 0.05, -4.0)
+				me.rotation.y = PI
+				me.head.rotation.x = -0.2
 			if events.moose_active:
 				# Katsotaan hirveä sivulta.
 				await get_tree().create_timer(0.2).timeout
@@ -1046,7 +1054,7 @@ func _run_autotest() -> void:
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
 	me.force_active = false
-	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and stunt_ok and story_ok and snowball_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
+	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and stunt_ok and story_ok and snowball_ok and snowman_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -1115,6 +1123,22 @@ func _autotest_workers(me) -> bool:
 	var fired: bool = hired.is_empty() and workers._workers.is_empty()
 	print("AUTOTEST Duunarit: palkattu %s, kolattu %d, kasassa %d, palkka %s, irtisanottu %s" % [hired_ok, moved, piled, wage_ok, fired])
 	return hired_ok and moved > 0 and piled > 0 and wage_ok and fired
+
+
+## Lapset rakentavat lumiukon, ja se kaatuu, kun lumet kolataan sen alta.
+func _autotest_snowman(me) -> bool:
+	events.trigger(events.LUMIUKKO)
+	await get_tree().create_timer(0.3).timeout
+	var built: bool = events.snowmen.size() == 1
+	var spot: Vector3 = events.snowmen.values()[0] if built else Vector3.ZERO
+	var deep: bool = depth_at(spot) > events.SNOWMAN_FALL_CM
+	me.global_position = spot + Vector3(1.0, 0.05, 0)
+	var xp_before: int = _xp.get(multiplayer.get_unique_id(), 0)
+	field_at(spot).remove_snow(spot, 1.0, 100000, 255)
+	await get_tree().create_timer(0.5).timeout
+	var fell: bool = events.snowmen.is_empty() and _xp.get(multiplayer.get_unique_id(), 0) - xp_before == events.SNOWMAN_XP
+	print("AUTOTEST Lumiukko: rakennettu %s, kasa syvä %s, kaatui %s" % [built, deep, fell])
+	return built and deep and fell
 
 
 ## Heitä lumipallo nuken päälle ja katso, että palvelin laskee osuman.
