@@ -139,7 +139,7 @@ func _build_menu() -> void:
 	box.add_child(_button("Yksinpeli", func(): _main().start_singleplayer()))
 	box.add_child(_button("Lopeta", func(): get_tree().quit()))
 
-	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo / kauppa · F kelkka · Z X C V tanssit · Esc valikko\nNaapurit maksavat pihateidensä kolaamisesta. Rahalla saa parempia vehkeitä.", 13, Color(0.8, 0.78, 0.7))
+	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo / kauppa · F kelkka · Z X C V tanssit · Esc valikko\nNaapurit maksavat pihateidensä kolaamisesta. Kelkkapuisto on talon pohjoispuolella: ilmassa Shift + A/D pyörii, Shift + W/S volttaa.", 13, Color(0.8, 0.78, 0.7))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(help)
 
@@ -539,6 +539,14 @@ func _close_chat() -> void:
 	typing = false
 	_chat_input.release_focus()
 	_chat_input.visible = false
+
+
+func stunt_popup(text: String) -> void:
+	_popup.text = text
+	_popup.modulate.a = 1.0
+	var tween := create_tween()
+	tween.tween_interval(2.0)
+	tween.tween_property(_popup, "modulate:a", 0.0, 0.8)
 
 
 func level_up_popup(level: int) -> void:

@@ -5,6 +5,7 @@ extends RefCounted
 const SnowField := preload("res://scripts/snow_field.gd")
 const Village := preload("res://scripts/village.gd")
 const Tools := preload("res://scripts/tools.gd")
+const Kelkkapuisto := preload("res://scripts/kelkkapuisto.gd")
 
 const SNOW_LEVEL := 0.30
 const FALU_RED := Color(0.52, 0.11, 0.07)
@@ -37,6 +38,7 @@ static func build(root: Node3D, snow: Node3D) -> Dictionary:
 		_neighbour(world, i)
 	for i in Village.SHOPS.size():
 		_shop(world, i)
+	Kelkkapuisto.build(world)
 	var naava := _forest(world)
 	var snowfall := _snowfall(world)
 	return {"snowfall": snowfall, "world": world, "naava": naava}
@@ -449,7 +451,7 @@ static func tree_spots() -> Array:
 			on_plot = on_plot or (absf(p.x - n["x"]) < 8.0 and p.z > Village.ROAD_FAR and p.z < Village.ROAD_FAR + n["d"] + 9.0)
 		for shop in Village.SHOPS:
 			on_plot = on_plot or (absf(p.x - shop["x"]) < 10.0 and p.z > Village.ROAD_FAR and p.z < Village.ROAD_FAR + 18.0)
-		if on_plot:
+		if on_plot or Kelkkapuisto.AREA.grow(3.0).has_point(Vector2(p.x, p.z)) or Kelkkapuisto.TRAIL.grow(2.0).has_point(Vector2(p.x, p.z)):
 			continue
 		_tree_cache.append([p, rng.randf_range(5.0, 13.0), rng.randf() * TAU])
 	return _tree_cache
