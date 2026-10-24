@@ -30,6 +30,8 @@ var _xp_bar: ProgressBar
 var _carry_label: Label
 var _popup: Label
 var _quest_title: Label
+var _scores: PanelContainer
+var _scores_grid: GridContainer
 var _quest_task: Label
 var _tool_labels: Array[Label] = []
 var _hint: Label
@@ -141,7 +143,7 @@ func _build_menu() -> void:
 	box.add_child(_button("Yksinpeli", func(): _main().start_singleplayer()))
 	box.add_child(_button("Lopeta", func(): get_tree().quit()))
 
-	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo / kauppa · F kelkka · Z X C V tanssit · Esc valikko\nNaapurit maksavat pihateidensä kolaamisesta. Kelkkapuisto on talon pohjoispuolella: ilmassa Shift + A/D pyörii, Shift + W/S volttaa.", 13, Color(0.8, 0.78, 0.7))
+	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo / kauppa · F kelkka · Z X C V tanssit · Oikea hiiri lumipallo · Tab tulostaulu · Esc valikko\nNaapurit maksavat pihateidensä kolaamisesta. Kelkkapuisto on talon pohjoispuolella: ilmassa Shift + A/D pyörii, Shift + W/S volttaa.", 13, Color(0.8, 0.78, 0.7))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(help)
 
@@ -385,6 +387,14 @@ func chat(text: String, color := Color.WHITE) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# Tab pohjassa näyttää kylän tulostaulun.
+	if _game.visible and event is InputEventKey and event.physical_keycode == KEY_TAB and not event.echo and not typing:
+		if event.pressed:
+			_main().request_scores()
+		elif _scores:
+			_scores.visible = false
+		get_viewport().set_input_as_handled()
+		return
 	if not _game.visible or not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	if not typing and not paused and shop < 0 and event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_T]:
@@ -558,6 +568,49 @@ func _close_chat() -> void:
 	typing = false
 	_chat_input.release_focus()
 	_chat_input.visible = false
+
+
+## Tulostaulun rivit: [nimi, taso, kelkkaennätys, tarinan vaihe, vaiheita].
+func show_scores(rows: Array) -> void:
+	if _scores == null:
+		_scores = PanelContainer.new()
+		_scores.add_theme_stylebox_override("panel", _osrs_box())
+		_scores.set_anchors_preset(Control.PRESET_CENTER_TOP)
+		_scores.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		_scores.position.y = 120
+		_scores.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_game.add_child(_scores)
+		var box := VBoxContainer.new()
+		_scores.add_child(box)
+		var title := _label("Kylän tulostaulu", 24, OSRS_YELLOW)
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(title)
+		_scores_grid = GridContainer.new()
+		_scores_grid.columns = 4
+		_scores_grid.add_theme_constant_override("h_separation", 28)
+		box.add_child(_scores_grid)
+	for child in _scores_grid.get_children():
+		child.queue_free()
+	for h in ["Kolaaja", "Kolaus-taso", "Kelkkaennätys", "Tarina"]:
+		_scores_grid.add_child(_label(h, 16, Color(0.75, 0.75, 0.7)))
+	for r in rows:
+		_scores_grid.add_child(_label(str(r[0]), 17, Color.WHITE))
+		_scores_grid.add_child(_label(str(r[1]), 17, OSRS_YELLOW))
+		_scores_grid.add_child(_label("%d p" % r[2] if r[2] > 0 else "-", 17, Color(0.6, 0.85, 1.0)))
+		_scores_grid.add_child(_label("%d/%d" % [r[3], r[4]], 17, Color(0.6, 1.0, 0.5)))
+	_scores.visible = true
+
+
+## Lumipallo osui: ruutu valkenee hetkeksi.
+func splat() -> void:
+	var s := ColorRect.new()
+	s.color = Color(0.97, 0.98, 1.0, 0.85)
+	s.set_anchors_preset(Control.PRESET_FULL_RECT)
+	s.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_game.add_child(s)
+	var tween := create_tween()
+	tween.tween_property(s, "color:a", 0.0, 1.2)
+	tween.tween_callback(s.queue_free)
 
 
 func set_quest(title: String, task: String) -> void:

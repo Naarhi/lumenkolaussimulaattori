@@ -309,6 +309,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		elif tool == Tools.LAPIO and not riding:
 			request_shovel()
+	elif event.is_action_pressed("heita") and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		_main().snowballs.throw(camera)
 	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_E:
 		interact()
 	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F:

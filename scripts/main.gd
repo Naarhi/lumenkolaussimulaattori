@@ -10,6 +10,7 @@ const NeighboursScript := preload("res://scripts/neighbours.gd")
 const WorkersScript := preload("res://scripts/workers.gd")
 const Kelkkapuisto := preload("res://scripts/kelkkapuisto.gd")
 const StoryScript := preload("res://scripts/story.gd")
+const SnowballsScript := preload("res://scripts/snowballs.gd")
 const Kylalaiset := preload("res://scripts/kylalaiset.gd")
 
 const SHOVEL_REACH := 1.1
@@ -42,6 +43,7 @@ var scenery := {}
 var neighbours
 var workers
 var story
+var snowballs
 ## Asiakas: oman tarinan vaihe.
 var story_step := 0
 ## Asiakas: omat palkatut duunarit (ITEMS-tunnisteet).
@@ -81,6 +83,7 @@ var _stunt_best := {}
 var _stunt_at := {}
 ## Asiakas: viimeisin oma temppu (autotesti).
 var last_stunt := ""
+var last_scores := []
 var _regen_timer := 0.0
 
 # Testiajo
@@ -104,6 +107,9 @@ func _ready() -> void:
 	story = StoryScript.new()
 	story.name = "Tarina"
 	add_child(story)
+	snowballs = SnowballsScript.new()
+	snowballs.name = "Lumipallot"
+	add_child(snowballs)
 	if not dedicated:
 		scenery = Pihapiiri.build(self, snow)
 		add_child(Kylalaiset.new())
@@ -420,6 +426,31 @@ func _cl_hired(items: Array) -> void:
 	hired = items
 	if not dedicated and hud.shop >= 0:
 		hud._fill_shop()
+
+
+func request_scores() -> void:
+	srv_scores.rpc_id(1)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func srv_scores() -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == 0:
+		sender = multiplayer.get_unique_id()
+	var rows := []
+	for peer in _names:
+		rows.append([_names[peer], Skills.level_for_xp(_xp.get(peer, 0)), _stunt_best.get(peer, 0), story.step_of(peer), StoryScript.STEPS.size()])
+	rows.sort_custom(func(a, b): return a[1] > b[1] or (a[1] == b[1] and a[2] > b[2]))
+	_cl_scores.rpc_id(sender, rows)
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_scores(rows: Array) -> void:
+	last_scores = rows
+	if not dedicated:
+		hud.show_scores(rows)
 
 
 func story_changed(peer: int) -> void:
@@ -941,6 +972,9 @@ func _run_autotest() -> void:
 	var dance_ok := true
 	if Net.cli.has("tanssi"):
 		dance_ok = await _autotest_dance(me)
+	var snowball_ok := true
+	if Net.cli.has("lumipallo") and multiplayer.is_server():
+		snowball_ok = await _autotest_snowball(me)
 	var story_ok := true
 	if Net.cli.has("tarina") and multiplayer.is_server():
 		story_ok = await _autotest_story()
@@ -973,6 +1007,8 @@ func _run_autotest() -> void:
 			me.start_emote(int(Net.cli["emote"]))
 		if Net.cli.has("ride") and not me.riding:
 			me.toggle_riding()
+		if Net.cli.has("tulostaulu"):
+			request_scores()
 		if Net.cli.has("pause"):
 			hud._open_pause()
 		if Net.cli.has("event") and multiplayer.is_server():
@@ -988,7 +1024,7 @@ func _run_autotest() -> void:
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
 	me.force_active = false
-	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and stunt_ok and story_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
+	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and stunt_ok and story_ok and snowball_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -1057,6 +1093,36 @@ func _autotest_workers(me) -> bool:
 	var fired: bool = hired.is_empty() and workers._workers.is_empty()
 	print("AUTOTEST Duunarit: palkattu %s, kolattu %d, kasassa %d, palkka %s, irtisanottu %s" % [hired_ok, moved, piled, wage_ok, fired])
 	return hired_ok and moved > 0 and piled > 0 and wage_ok and fired
+
+
+## Heitä lumipallo nuken päälle ja katso, että palvelin laskee osuman.
+func _autotest_snowball(me) -> bool:
+	me.global_position = Vector3(0, 0.05, 0)
+	me.rotation.y = 0.0
+	me.head.rotation.x = 0.0
+	var dummy := Node3D.new()
+	dummy.name = "424242"
+	add_child(dummy)
+	snowballs.test_targets = [dummy]
+	dummy.global_position = Vector3(0, 0.05, -6.0)
+	await get_tree().create_timer(0.2).timeout
+	snowballs.throw(me.camera)
+	await get_tree().create_timer(1.0).timeout
+	var hit: bool = snowballs.last_hit == [multiplayer.get_unique_id(), 424242]
+	# Toinen heitto ohi nuken: osumaa ei tule ja pallo putoaa maahan.
+	snowballs.last_hit = []
+	me.rotation.y = PI * 0.5
+	await get_tree().create_timer(0.6).timeout
+	snowballs.throw(me.camera)
+	await get_tree().create_timer(3.5).timeout
+	var miss: bool = snowballs.last_hit.is_empty() and snowballs._balls.is_empty()
+	snowballs.test_targets = []
+	dummy.queue_free()
+	request_scores()
+	await get_tree().create_timer(0.3).timeout
+	var scores: bool = last_scores.size() == 1 and last_scores[0][0] == _names[multiplayer.get_unique_id()]
+	print("AUTOTEST Lumipallo: osui %s, ohi meni siististi %s, tulostaulu %s" % [hit, miss, scores])
+	return hit and miss and scores
 
 
 func _story_rewards(from_step: int, to_step: int) -> int:
