@@ -23,3 +23,6 @@
 *.uproject text eol=lf
 *.sh text eol=lf
 *.bat text eol=crlf
+
+# README-kuvat suoraan gitiin (pienet, ja LFS ei toimi kaikkialla)
+docs/kuvat/** -filter -diff -merge -text
