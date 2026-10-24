@@ -85,6 +85,19 @@ func join_game(address: String) -> void:
 	_join(address)
 
 
+## Esc-valikon "Poistu päävalikkoon": katkaise yhteys tai lopeta oma palvelin.
+func leave_game() -> void:
+	if multiplayer.is_server():
+		_write_xp()
+	Net.leave()
+	for p in players.get_children():
+		p.queue_free()
+	_carried.clear()
+	_names.clear()
+	_levels.clear()
+	hud.show_menu(self)
+
+
 func _start_server(is_dedicated: bool) -> void:
 	var err := Net.host(Net.port())
 	if err != OK:
@@ -504,6 +517,8 @@ func _run_autotest() -> void:
 	if Net.cli.has("screenshot"):
 		me.rotation.y = deg_to_rad(float(Net.cli.get("yaw", "0")))
 		me.head.rotation.x = -0.35
+		if Net.cli.has("pause"):
+			hud._open_pause()
 		if Net.cli.has("event") and multiplayer.is_server():
 			events.trigger(int(Net.cli["event"]))
 		await get_tree().create_timer(float(Net.cli.get("wait", "1.5"))).timeout

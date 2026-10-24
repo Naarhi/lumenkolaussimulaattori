@@ -18,6 +18,9 @@ var _name: LineEdit
 var _chat_input: LineEdit
 ## Tosi, kun pelaaja kirjoittaa chattiin (liike ja lapio pois päältä).
 var typing := false
+## Tosi, kun Esc-valikko on auki.
+var paused := false
+var _pause: Control
 var _status: Label
 var _game: Control
 var _chat: VBoxContainer
@@ -30,6 +33,7 @@ var _tool_labels: Array[Label] = []
 
 func _ready() -> void:
 	_build_game_ui()
+	_build_pause_menu()
 	_build_menu()
 	_game.visible = false
 	_menu.visible = false
@@ -37,8 +41,14 @@ func _ready() -> void:
 
 # --- Valikko ---------------------------------------------------------------
 
+## Tosi, kun pelaajan ohjaus on pois päältä (chat tai valikko).
+func blocks_input() -> bool:
+	return typing or paused
+
+
 func show_menu(main, message := "") -> void:
 	_menu.set_meta("main", main)
+	_close_pause(false)
 	_menu.visible = true
 	_game.visible = false
 	_status.visible = false
@@ -108,7 +118,7 @@ func _build_menu() -> void:
 	box.add_child(_button("Yksinpeli", func(): _main().start_singleplayer()))
 	box.add_child(_button("Lopeta", func(): get_tree().quit()))
 
-	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · Esc vapauttaa hiiren", 13, Color(0.8, 0.78, 0.7))
+	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · Esc valikko", 13, Color(0.8, 0.78, 0.7))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(help)
 
@@ -261,7 +271,7 @@ func chat(text: String, color := Color.WHITE) -> void:
 func _input(event: InputEvent) -> void:
 	if not _game.visible or not (event is InputEventKey) or not event.pressed or event.echo:
 		return
-	if not typing and event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_T]:
+	if not typing and not paused and event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_T]:
 		typing = true
 		_chat_input.visible = true
 		_chat_input.text = ""
@@ -270,6 +280,73 @@ func _input(event: InputEvent) -> void:
 	elif typing and event.physical_keycode == KEY_ESCAPE:
 		_close_chat()
 		get_viewport().set_input_as_handled()
+	elif event.physical_keycode == KEY_ESCAPE:
+		if paused:
+			_close_pause(true)
+		else:
+			_open_pause()
+		get_viewport().set_input_as_handled()
+
+
+# --- Esc-valikko --------------------------------------------------------------------
+
+func _build_pause_menu() -> void:
+	_pause = ColorRect.new()
+	(_pause as ColorRect).color = Color(0, 0, 0, 0.45)
+	_pause.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_pause.visible = false
+	add_child(_pause)
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _osrs_box())
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	panel.custom_minimum_size = Vector2(380, 0)
+	_pause.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	panel.add_child(box)
+	var title := _label("Tauko", 26, OSRS_YELLOW)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	box.add_child(_button("Jatka kolaamista", func(): _close_pause(true)))
+	box.add_child(_volume_slider("Efektit", Sfx.BUS))
+	box.add_child(_volume_slider("Musiikki", Music.BUS))
+	box.add_child(_button("Poistu päävalikkoon", func(): _main().leave_game()))
+	box.add_child(_button("Lopeta peli", func(): get_tree().quit()))
+
+
+func _volume_slider(title: String, bus_name: String) -> Control:
+	var row := HBoxContainer.new()
+	var l := _label(title, 17, Color(0.95, 0.9, 0.75))
+	l.custom_minimum_size.x = 110
+	row.add_child(l)
+	var slider := HSlider.new()
+	slider.min_value = 0.0
+	slider.max_value = 1.0
+	slider.step = 0.05
+	slider.value = Sfx.get_volume(bus_name)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	slider.value_changed.connect(func(v: float):
+		Sfx.set_volume(bus_name, v)
+		if bus_name == Sfx.BUS:
+			Sfx.play_2d(Sfx.SCOOP))
+	row.add_child(slider)
+	return row
+
+
+func _open_pause() -> void:
+	paused = true
+	_pause.visible = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _close_pause(recapture: bool) -> void:
+	paused = false
+	_pause.visible = false
+	if recapture and DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func _on_chat_submitted(text: String) -> void:

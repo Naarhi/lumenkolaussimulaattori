@@ -19,6 +19,9 @@ var _timer: Timer
 
 
 func start_server() -> void:
+	if _timer:
+		_schedule()
+		return
 	_timer = Timer.new()
 	_timer.one_shot = true
 	_timer.timeout.connect(_on_timer)

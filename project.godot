@@ -14,6 +14,7 @@ config/icon="res://icon.svg"
 
 Net="*res://scripts/net.gd"
 Sfx="*res://scripts/retro_sfx.gd"
+Music="*res://scripts/music.gd"
 
 [display]
 
