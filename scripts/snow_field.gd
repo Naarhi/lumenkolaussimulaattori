@@ -46,6 +46,12 @@ func setup(width: float, depth: float, start_depth := INITIAL_DEPTH_CM) -> void:
 	chunks_x = cells_x / CHUNK
 	chunks_z = cells_z / CHUNK
 	initial_depth = start_depth
+	# Kohtaukseen valmiiksi lisätty kenttä rakennetaan uudelleen uuteen kokoon.
+	if is_node_ready():
+		for mi in _meshes:
+			mi.queue_free()
+		_meshes.clear()
+		_ready()
 
 
 func _ready() -> void:
@@ -54,7 +60,8 @@ func _ready() -> void:
 	_render = DisplayServer.get_name() != "headless"
 	if not _render:
 		return
-	material = make_snow_material()
+	if material == null:
+		material = make_snow_material()
 	for i in chunks_x * chunks_z:
 		var mi := MeshInstance3D.new()
 		mi.material_override = material
