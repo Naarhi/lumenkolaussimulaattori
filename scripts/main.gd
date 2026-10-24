@@ -7,6 +7,7 @@ const Skills := preload("res://scripts/skills.gd")
 const Tools := preload("res://scripts/tools.gd")
 const Village := preload("res://scripts/village.gd")
 const NeighboursScript := preload("res://scripts/neighbours.gd")
+const WorkersScript := preload("res://scripts/workers.gd")
 
 const SHOVEL_REACH := 1.1
 const SHOVEL_RADIUS := 0.32
@@ -36,6 +37,9 @@ const SPAWN_POINT := Vector3(0, 0.05, 4.0)
 var dedicated := false
 var scenery := {}
 var neighbours
+var workers
+## Asiakas: omat palkatut duunarit (ITEMS-tunnisteet).
+var hired := []
 ## Kaikki lumikentät: kotipiha ja naapurien pihatiet.
 var fields: Array = []
 ## Oman pelaajan rahat, ostetut tavarat ja suolakilot (palvelin lähettää).
@@ -83,6 +87,9 @@ func _ready() -> void:
 	neighbours.name = "Naapurit"
 	add_child(neighbours)
 	fields = [snow] + neighbours.fields
+	workers = WorkersScript.new()
+	workers.name = "Duunarit"
+	add_child(workers)
 	if not dedicated:
 		scenery = Pihapiiri.build(self, snow)
 
@@ -175,6 +182,7 @@ func _on_peer_connected(id: int) -> void:
 	snow.send_full_state(id)
 	neighbours.send_full_state(id)
 	events.send_state(id)
+	workers.send_state(id)
 	spawner.spawn(id)
 	for peer in _names:
 		_cl_name.rpc_id(id, peer, _names[peer], Skills.level_for_xp(_xp.get(peer, 0)))
@@ -187,6 +195,7 @@ func _on_peer_disconnected(id: int) -> void:
 	_store_profile(id)
 	_write_saves()
 	events.drop_naava(id)
+	workers.fire(id)
 	if _names.has(id):
 		_cl_announce.rpc("%s lähti pihalta." % _names[id])
 		_names.erase(id)
@@ -372,6 +381,29 @@ func add_money(peer: int, amount: int) -> void:
 	_cl_cash.rpc_id(peer, amount)
 
 
+## Palvelin: veloita pelaajalta rahaa (duunarin palkka). Palauttaa false, jos rahat eivät riitä.
+func charge(peer: int, amount: int) -> bool:
+	if _money.get(peer, 0) < amount:
+		return false
+	_money[peer] -= amount
+	_store_profile(peer)
+	_send_profile(peer)
+	return true
+
+
+## Palvelin: kerro pelaajalle, ketkä duunarit ovat hänen palkkalistoillaan.
+func send_hired(peer: int) -> void:
+	if peer == multiplayer.get_unique_id() or peer in multiplayer.get_peers():
+		_cl_hired.rpc_id(peer, workers.hired_by(peer))
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_hired(items: Array) -> void:
+	hired = items
+	if not dedicated and hud.shop >= 0:
+		hud._fill_shop()
+
+
 func _send_profile(peer: int) -> void:
 	_profile_dirty.erase(peer)
 	_cl_profile.rpc_id(peer, _money.get(peer, 0), _owned.get(peer, []), _salt.get(peer, 0.0))
@@ -426,6 +458,9 @@ func srv_buy(item: String) -> void:
 	var info: Dictionary = Village.ITEMS[item]
 	if player == null or Village.shop_near(player.global_position) != info["shop"] or not _names.has(sender):
 		return
+	if info.has("worker"):
+		_srv_hire(sender, item)
+		return
 	var list: Array = _owned.get(sender, [])
 	var consumable := info.has("salt")
 	if not consumable and item in list:
@@ -446,6 +481,24 @@ func srv_buy(item: String) -> void:
 	print("[Kauppa] %s osti: %s" % [_names[sender], info["name"]])
 	if not consumable:
 		_cl_announce.rpc("%s osti uuden vehkeen: %s!" % [_names[sender], info["name"]])
+
+
+## Palvelin: palkkaa duunari tai irtisano jo palkattu.
+func _srv_hire(sender: int, item: String) -> void:
+	var info: Dictionary = Village.ITEMS[item]
+	if item in workers.hired_by(sender):
+		workers.fire(sender, item)
+		_cl_announce.rpc_id(sender, "%s irtisanottu. Kiitos avusta!" % info["worker"])
+		return
+	if _money.get(sender, 0) < info["price"]:
+		_cl_announce.rpc_id(sender, "Rahat eivät riitä: palkkausmaksu on %d €." % info["price"])
+		return
+	var error: String = workers.hire(sender, item)
+	if error != "":
+		_cl_announce.rpc_id(sender, error)
+		return
+	charge(sender, info["price"])
+	_cl_announce.rpc("%s palkkasi duunarin: %s (%d €/min). Duunari kolaa tilattuja pihateitä ja kasaa lumet." % [_names[sender], info["worker"], info["wage"]])
 
 
 @rpc("authority", "call_local", "reliable")
@@ -490,7 +543,7 @@ func srv_set_name(player_name: String) -> void:
 	_salt[sender] = float(saved.get("salt", 0.0))
 	# Testiajo (vain palvelimen komentorivillä): kaikki tavarat heti.
 	if Net.cli.has("give"):
-		_owned[sender] = Village.ITEM_ORDER.filter(func(i): return i != "suola")
+		_owned[sender] = Village.ITEM_ORDER.filter(func(i): return i != "suola" and not Village.ITEMS[i].has("worker"))
 		_salt[sender] = 50.0
 	_cl_xp.rpc_id(sender, xp, false)
 	_send_profile(sender)
@@ -775,7 +828,9 @@ func _run_autotest() -> void:
 	var me = local_player()
 	# Kotipiha on puhdas, joten työkaluja testataan Kauppisten pihatiellä (jokainen omalla kohdallaan).
 	var test_field = neighbours.fields[2]
-	me.global_position = test_field.to_global(Vector3(1.2 + float(absi(multiplayer.get_unique_id()) % 3) * 2.0, 0.05, 5.5))
+	# Paikka pelaajan liittymisjärjestyksestä, jotta kaksi testaajaa ei kolaa samaa kohtaa.
+	var slot: int = me.get_index()
+	me.global_position = test_field.to_global(Vector3(1.2 + float(slot % 3) * 2.0, 0.05, 5.5 - floorf(slot / 3.0) * 2.5))
 	me.rotation.y = 0.0
 	await get_tree().create_timer(0.3).timeout
 	var tool := int(Net.cli.get("tool", "0"))
@@ -810,6 +865,9 @@ func _run_autotest() -> void:
 	var dance_ok := true
 	if Net.cli.has("tanssi"):
 		dance_ok = await _autotest_dance(me)
+	var workers_ok := true
+	if Net.cli.has("duunari") and multiplayer.is_server():
+		workers_ok = await _autotest_workers(me)
 	var truck_ok := true
 	if Net.cli.has("aura") and multiplayer.is_server():
 		truck_ok = await _autotest_truck(me)
@@ -848,7 +906,7 @@ func _run_autotest() -> void:
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
 	me.force_active = false
-	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
+	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -878,6 +936,42 @@ func _autotest_economy(me) -> bool:
 	me.select_tool(Tools.MASI)
 	print("AUTOTEST Talous: lukossa %s, palkkio %d €, MASI ostettu %s, rahaa %d €, työkalu %s" % [locked, paid, bought, money, Tools.NAMES[me.tool]])
 	return locked and paid == Village.NEIGHBOURS[index]["pay"] and bought and me.tool == Tools.MASI
+
+
+## Palkkaa duunari, katso että se kantaa lunta pihatieltä kasaan ja saa palkkansa, ja irtisano se.
+func _autotest_workers(me) -> bool:
+	var id := multiplayer.get_unique_id()
+	add_money(id, 100 - _money.get(id, 0))
+	me.global_position = Village.counter_position(Village.TYONVALITYS) + Vector3(0, 0.05, 0)
+	await get_tree().create_timer(0.3).timeout
+	var drive := []
+	var pile := []
+	for i in neighbours.fields.size():
+		drive.append(neighbours._drive_snow(i))
+		pile.append(neighbours._pile_snow(i))
+	buy("jussi")
+	await get_tree().create_timer(0.5).timeout
+	var hired_ok: bool = hired == ["jussi"] and money == 100 - Village.ITEMS["jussi"]["price"]
+	await get_tree().create_timer(14.0).timeout
+	var moved := 0
+	var piled := 0
+	for i in neighbours.fields.size():
+		moved += drive[i] - neighbours._drive_snow(i)
+		piled += neighbours._pile_snow(i) - pile[i]
+	# Palkkapäivä heti.
+	var before := money
+	for w in workers._workers.values():
+		w["wage_timer"] = 0.0
+	await get_tree().create_timer(0.5).timeout
+	var wage_ok: bool = before - money == Village.ITEMS["jussi"]["wage"]
+	if Net.cli.has("screenshot"):
+		# Duunari jää kuvaan.
+		return hired_ok and moved > 0 and wage_ok
+	buy("jussi")
+	await get_tree().create_timer(0.5).timeout
+	var fired: bool = hired.is_empty() and workers._workers.is_empty()
+	print("AUTOTEST Duunarit: palkattu %s, kolattu %d, kasassa %d, palkka %s, irtisanottu %s" % [hired_ok, moved, piled, wage_ok, fired])
+	return hired_ok and moved > 0 and piled > 0 and wage_ok and fired
 
 
 ## Aja moottorikelkalla tielle päin.

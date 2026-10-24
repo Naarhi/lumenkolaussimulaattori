@@ -499,18 +499,32 @@ func _fill_shop() -> void:
 	_shop_money.text = "Rahaa: %s €" % _thousands(main.money)
 	for child in _shop_rows.get_children():
 		child.queue_free()
+	if shop == Village.TYONVALITYS:
+		var note := _label("Duunarit kolaavat tilattuja pihateitä ja kasaavat lumet. Palkka veloitetaan minuutin välein, ja jos rahat loppuvat, duunari lähtee kotiin.", 15, Color(0.8, 0.85, 0.9))
+		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		note.custom_minimum_size.x = 420
+		_shop_rows.add_child(note)
 	for id in Village.ITEM_ORDER:
 		var info: Dictionary = Village.ITEMS[id]
 		if info["shop"] != shop:
 			continue
 		var row := HBoxContainer.new()
-		var name_label := _label("%s  %d €" % [info["name"], info["price"]], 18, Color(0.95, 0.9, 0.75))
+		var text := "%s  %d €" % [info["name"], info["price"]]
+		if info.has("worker"):
+			text = "%s  %d € + %d €/min" % [info["name"], info["price"], info["wage"]]
+		var name_label := _label(text, 18, Color(0.95, 0.9, 0.75))
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(name_label)
-		var have: bool = not info.has("salt") and id in main.owned
-		var b := _button("Omistat" if have else "Osta", func(): main.buy(id))
+		var b: Button
+		if info.has("worker"):
+			var working: bool = id in main.hired
+			b = _button("Irtisano" if working else "Palkkaa", func(): main.buy(id))
+			b.disabled = not working and main.money < info["price"]
+		else:
+			var have: bool = not info.has("salt") and id in main.owned
+			b = _button("Omistat" if have else "Osta", func(): main.buy(id))
+			b.disabled = have or main.money < info["price"]
 		b.custom_minimum_size.x = 110
-		b.disabled = have or main.money < info["price"]
 		row.add_child(b)
 		_shop_rows.add_child(row)
 

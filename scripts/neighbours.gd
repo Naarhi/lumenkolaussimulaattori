@@ -51,6 +51,10 @@ func send_full_state(peer: int) -> void:
 		field.send_full_state(peer)
 
 
+func is_ordered(index: int) -> bool:
+	return _ordered.get(index, false)
+
+
 ## Palvelin: kirjaa pelaajan työn, jos kenttä on naapurin pihatie.
 func credit(field, peer: int, amount: float) -> void:
 	var index := fields.find(field)
