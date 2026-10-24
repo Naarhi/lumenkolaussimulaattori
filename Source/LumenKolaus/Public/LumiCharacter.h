@@ -25,6 +25,7 @@ class LUMENKOLAUS_API ALumiCharacter : public ACharacter
 public:
 	ALumiCharacter();
 
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void PawnClientRestart() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -51,6 +52,20 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Lapio")
 	float ShovelCooldownSeconds = 0.45f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Lumi")
+	float BaseWalkSpeed = 450.f;
+
+	/** Kävelynopeus, kun lunta on DeepSnowDepthCm tai enemmän. */
+	UPROPERTY(EditDefaultsOnly, Category = "Lumi")
+	float DeepSnowWalkSpeed = 170.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Lumi")
+	float DeepSnowDepthCm = 60.f;
+
+	/** Kuinka monta senttiä lunta yksi askel painaa kasaan (jalanjäljet). */
+	UPROPERTY(EditDefaultsOnly, Category = "Lumi")
+	int32 FootprintDepthCm = 3;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Audio")
 	TObjectPtr<USoundBase> ScoopSound;
@@ -99,4 +114,5 @@ private:
 
 	TWeakObjectPtr<ASnowField> CachedSnowField;
 	double LastShovelTime = -100.0;
+	float FootprintTimer = 0.f;
 };
