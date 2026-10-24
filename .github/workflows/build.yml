@@ -35,6 +35,9 @@ jobs:
       - name: Tuo projekti
         run: godot --headless --path . --import || true
 
+      - name: Lumitesti
+        run: godot --headless --path . -s tests/snow_test.gd
+
       - name: Moninpelitesti
         run: tests/multiplayer_test.sh godot
 

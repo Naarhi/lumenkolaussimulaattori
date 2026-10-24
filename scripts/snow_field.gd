@@ -11,7 +11,11 @@ const CHUNKS_X := CELLS_X / CHUNK
 const CHUNKS_Z := CELLS_Z / CHUNK
 const MAX_DEPTH_CM := 250
 const INITIAL_DEPTH_CM := 30
-const SNOWFALL_CM_PER_MINUTE := 0.5
+const SNOWFALL_CM_PER_MINUTE := 0.3
+## Hiljainen lumisade ei kasvata lunta tätä syvemmäksi (muuten pitkään pyörivä palvelin hautaa pihan).
+const SNOWFALL_MAX_DEPTH_CM := 40
+## Lumimyräkkäkään ei nosta tasaista hankea tätä korkeammaksi.
+const STORM_MAX_DEPTH_CM := 60
 const MAX_MESH_REBUILDS_PER_FRAME := 24
 
 var heights := PackedByteArray()
@@ -95,7 +99,7 @@ func _physics_process(delta: float) -> void:
 	if _snowfall_acc >= 1.0:
 		var whole := int(_snowfall_acc)
 		_snowfall_acc -= whole
-		add_snow_everywhere(whole)
+		add_snow_everywhere(whole, SNOWFALL_MAX_DEPTH_CM)
 	_flush_dirty()
 
 
@@ -137,10 +141,13 @@ func add_snow(world_pos: Vector3, radius: float, amount: int) -> void:
 		_change(cells[i].x, cells[i].y, roundi(amount * weights[i] / total))
 
 
-func add_snow_everywhere(depth_cm: int) -> void:
+## Sataa lunta koko pihalle, mutta vain soluihin, joissa lunta on alle max_depth_cm.
+func add_snow_everywhere(depth_cm: int, max_depth_cm: int) -> void:
 	for z in CELLS_Z:
 		for x in CELLS_X:
-			_change(x, z, depth_cm)
+			var room := max_depth_cm - _cell(x, z)
+			if room > 0:
+				_change(x, z, mini(depth_cm, room))
 
 
 ## Lunta janan suuntaiselle kaistalle (esim. aura-auton penkka).

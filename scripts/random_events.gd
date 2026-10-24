@@ -56,7 +56,7 @@ func trigger(type: int) -> void:
 			var row: int = snow.CELLS_Z - 4
 			snow.add_snow_line(snow.cell_center(0, row), snow.cell_center(snow.CELLS_X - 1, row), 0.9, 45)
 		LUMIMYRSKY:
-			snow.add_snow_everywhere(8)
+			snow.add_snow_everywhere(8, snow.STORM_MAX_DEPTH_CM)
 		HIRVI:
 			point = snow.random_point()
 		PERTTI:
