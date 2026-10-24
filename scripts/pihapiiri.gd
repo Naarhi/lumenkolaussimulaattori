@@ -763,6 +763,50 @@ static func make_plow_truck() -> Node3D:
 	return truck
 
 
+## Lasten lumiukko: kolme palloa, porkkananenä, hiilisilmät, oksakädet ja ämpäri päässä.
+static func make_snowman() -> Node3D:
+	var root := Node3D.new()
+	root.name = "Lumiukko"
+	var y := 0.0
+	for r in [0.45, 0.33, 0.24]:
+		var ball := MeshInstance3D.new()
+		var sphere := SphereMesh.new()
+		sphere.radius = r
+		sphere.height = r * 2.0
+		ball.mesh = sphere
+		ball.material_override = snow_material()
+		ball.position.y = y + r * 0.85
+		root.add_child(ball)
+		y += r * 1.6
+	var head_y := y - 0.24 * 0.75
+	var nose := MeshInstance3D.new()
+	var cone := CylinderMesh.new()
+	cone.top_radius = 0.0
+	cone.bottom_radius = 0.04
+	cone.height = 0.22
+	nose.mesh = cone
+	nose.material_override = _mat(Color(0.95, 0.45, 0.08), 0.6)
+	nose.rotation.x = -PI * 0.5
+	nose.position = Vector3(0, head_y, -0.3)
+	root.add_child(nose)
+	for ex in [-0.08, 0.08]:
+		_box(root, Vector3(0.05, 0.05, 0.03), Vector3(ex, head_y + 0.08, -0.22), Color(0.05, 0.05, 0.05), 0.9)
+	for side in [-1.0, 1.0]:
+		var arm := _box(root, Vector3(0.55, 0.035, 0.035), Vector3(side * 0.55, 0.95, 0), Color(0.35, 0.22, 0.1), 0.9)
+		arm.rotation.z = side * 0.5
+	var bucket := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.13
+	cyl.bottom_radius = 0.16
+	cyl.height = 0.2
+	bucket.mesh = cyl
+	bucket.material_override = _mat(Color(0.85, 0.15, 0.12), 0.5)
+	bucket.position.y = y + 0.02
+	bucket.rotation.z = 0.2
+	root.add_child(bucket)
+	return root
+
+
 static func make_moose() -> Node3D:
 	var moose := Node3D.new()
 	moose.name = "Hirvi"
