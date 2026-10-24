@@ -18,6 +18,13 @@ const SLED_ACCEL := 7.0
 const SLED_BRAKE := 12.0
 const SLED_TURN := 1.9
 const SLED_HEIGHT := 0.25
+## Mäessä kelkka kiihtyy alamäkeen, ja ilmassa Shift + A/D pyörittää ja Shift + W/S tekee volttia.
+const SLED_SLOPE_PULL := 0.7
+const SLED_MAX_DOWNHILL := 22.0
+const AIR_SPIN := 5.5
+const AIR_FLIP := 6.0
+## Näin pitkä ilmalento lasketaan stuntiksi.
+const STUNT_MIN_AIR := 0.5
 ## Tanssit: näppäin, nimi ja kesto (0 = kunnes liikkuu).
 enum { EI_TANSSIA = -1, HUMPPA, LETKAJENKKA, TUULETUS, KUMARRUS }
 const EMOTES := [
@@ -65,6 +72,12 @@ var _sound_timer := 0.0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _swing: Tween
 var _sled: Node3D
+## Kelkan nokan kallistus (mäki tai voltti). Synkronoidaan muille pelaajille.
+var stunt_pitch := 0.0
+var _air_time := 0.0
+var _air_yaw := 0.0
+var _air_pitch := 0.0
+var _takeoff_pitch := 0.0
 var _speed := 0.0
 ## Tönäisy (hirven potku), joka hiipuu nopeasti.
 var _knock := Vector3.ZERO
@@ -117,7 +130,7 @@ func _init() -> void:
 	sync.name = "Sync"
 	sync.root_path = NodePath("..")
 	var config := SceneReplicationConfig.new()
-	for path in [NodePath(".:position"), NodePath(".:rotation"), NodePath("Head:rotation"), NodePath(".:tool"), NodePath(".:tool_active"), NodePath(".:riding"), NodePath(".:emote")]:
+	for path in [NodePath(".:position"), NodePath(".:rotation"), NodePath("Head:rotation"), NodePath(".:tool"), NodePath(".:tool_active"), NodePath(".:riding"), NodePath(".:emote"), NodePath(".:stunt_pitch")]:
 		config.add_property(path)
 		config.property_set_spawn(path, true)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -185,6 +198,10 @@ func toggle_riding() -> void:
 		return
 	riding = not riding
 	_speed = 0.0
+	stunt_pitch = 0.0
+	_air_time = 0.0
+	# Kelkalla kamera on selän takana, jotta hypyt ja voltit näkyvät.
+	_set_third_person(riding or emote >= 0)
 	if not riding:
 		# Katse jää samaan suuntaan, kun noustaan kelkasta.
 		rotation.y += head.rotation.y
@@ -200,6 +217,7 @@ func _process(delta: float) -> void:
 	# Boostissa näkymä keinuu hieman.
 	camera.rotation.z = sin(Time.get_ticks_msec() * 0.003) * 0.03 * minf(boost_time, 1.0)
 	_sled.visible = riding
+	_sled.rotation.x = stunt_pitch if riding else 0.0
 	_animate_body(delta)
 	var tool_shown := not riding and emote < 0 and ragdoll_time <= 0.0
 	if _tool_models[tool].visible != tool_shown:
@@ -345,7 +363,7 @@ func _physics_process(delta: float) -> void:
 ## Aloita tai lopeta tanssi (-1). Vain oma pelaaja.
 func start_emote(index: int) -> void:
 	emote = index
-	_set_third_person(emote >= 0)
+	_set_third_person(emote >= 0 or riding)
 
 
 ## Aura-auto osui: pelaaja lentää ja pyörii hetken (kaikilla koneilla näkyy pyöriminen).
@@ -377,6 +395,8 @@ func _set_third_person(on: bool) -> void:
 	camera.position = Vector3(0, 0.6, 3.6) if on else Vector3.ZERO
 	camera.rotation.x = -0.2 if on else 0.0
 	_body.visible = on
+	# Omaa nimeä ei näytetä omassa kamerassa.
+	_nametag.visible = false
 	_show_tool()
 
 
@@ -425,6 +445,8 @@ func _animate_body(delta: float) -> void:
 			arm_r.x = 0.4
 	if emote >= 0 and EMOTES[emote]["time"] > 0.0 and t > EMOTES[emote]["time"] and is_multiplayer_authority():
 		start_emote(-1)
+	if riding:
+		rot.x += stunt_pitch
 	_body.position = pos
 	_body.rotation = rot
 	if _arms.size() == 2:
@@ -442,16 +464,61 @@ func _drive(delta: float) -> void:
 		_speed = move_toward(_speed, -SLED_REVERSE_SPEED, SLED_BRAKE * delta)
 	else:
 		_speed = move_toward(_speed, 0.0, 3.0 * delta)
+	if not is_on_floor():
+		_air(delta, throttle, steer)
+		return
 	var grip := clampf(absf(_speed) / 4.0, 0.0, 1.0) * signf(_speed if _speed != 0.0 else 1.0)
 	rotate_y(steer * SLED_TURN * grip * delta)
 	var forward := -transform.basis.z
-	velocity.x = forward.x * _speed
-	velocity.z = forward.z * _speed
+	# Kuljetaan maan pintaa pitkin, jotta hyppyrin nokalta lähdetään ilmaan.
+	var normal := get_floor_normal()
+	var along := (forward - normal * forward.dot(normal)).normalized()
+	_speed = clampf(_speed - along.y * _gravity * SLED_SLOPE_PULL * delta, -SLED_REVERSE_SPEED * 2.0, SLED_MAX_DOWNHILL)
+	if _air_time > 0.0:
+		_land()
+	velocity = along * _speed
+	stunt_pitch = lerp_angle(stunt_pitch, asin(clampf(along.y, -1.0, 1.0)), minf(delta * 12.0, 1.0))
 	move_and_slide()
 	if is_on_wall():
 		_speed *= 0.5
 	head.position.y = 1.6 + SLED_HEIGHT * 0.4
 	camera.fov = 75.0 + absf(_speed) * 0.8
+
+
+## Ilmassa vauhti säilyy. Shift pohjassa A/D pyörittää kelkkaa ja W/S tekee volttia.
+func _air(delta: float, throttle: float, steer: float) -> void:
+	if _air_time == 0.0:
+		_takeoff_pitch = stunt_pitch
+		_air_yaw = 0.0
+		_air_pitch = 0.0
+	_air_time += delta
+	# Temput vain Shift pohjassa, ettei hyppyristä kaasu pohjassa lähtevä pyöri vahingossa.
+	var trick := not _typing() and Input.is_action_pressed("juokse")
+	var spin := steer * (AIR_SPIN if trick else SLED_TURN * 0.5) * delta
+	rotate_y(spin)
+	_air_yaw += spin
+	if trick:
+		_air_pitch -= throttle * AIR_FLIP * delta
+	stunt_pitch = _takeoff_pitch + _air_pitch
+	move_and_slide()
+	head.position.y = 1.6 + SLED_HEIGHT * 0.4
+
+
+## Alastulo: laske temput ja kerro palvelimelle. Huono asento kaataa kelkan.
+func _land() -> void:
+	var yaw_off := absf(wrapf(_air_yaw, -PI, PI))
+	var pitch_off := absf(wrapf(_air_pitch, -PI, PI))
+	var spins := roundi(absf(_air_yaw) / TAU)
+	var flips := roundi(absf(_air_pitch) / TAU)
+	var crashed := pitch_off > 0.9 or yaw_off > 1.1
+	if _air_time >= STUNT_MIN_AIR or crashed:
+		_main().srv_stunt.rpc_id(1, _air_time, spins, flips, crashed)
+	if not crashed:
+		# Laskeudutaan sinne päin, mihin nokka osoittaa.
+		_speed = maxf(_speed * cos(minf(yaw_off, PI * 0.5)), 0.0)
+	_air_time = 0.0
+	_air_yaw = 0.0
+	_air_pitch = 0.0
 
 
 ## Pyydä palvelinta kauhomaan tai heittämään. Animaatio näytetään heti.

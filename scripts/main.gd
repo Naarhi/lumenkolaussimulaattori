@@ -8,6 +8,7 @@ const Tools := preload("res://scripts/tools.gd")
 const Village := preload("res://scripts/village.gd")
 const NeighboursScript := preload("res://scripts/neighbours.gd")
 const WorkersScript := preload("res://scripts/workers.gd")
+const Kelkkapuisto := preload("res://scripts/kelkkapuisto.gd")
 
 const SHOVEL_REACH := 1.1
 const SHOVEL_RADIUS := 0.32
@@ -70,6 +71,11 @@ var _salt := {}
 var _profile_dirty := {}
 ## Palvelin: kolaajien kunto (0-100). Hirven potku vie kuntoa, ja se palautuu hiljalleen.
 var _health := {}
+## Palvelin: kelkkastunttien ennätykset ja edellisen tempun aika.
+var _stunt_best := {}
+var _stunt_at := {}
+## Asiakas: viimeisin oma temppu (autotesti).
+var last_stunt := ""
 var _regen_timer := 0.0
 
 # Testiajo
@@ -202,7 +208,7 @@ func _on_peer_disconnected(id: int) -> void:
 	var player := players.get_node_or_null(str(id))
 	if player:
 		player.queue_free()
-	for dict in [_carried, _xp, _money, _owned, _salt, _profile_dirty, _health]:
+	for dict in [_carried, _xp, _money, _owned, _salt, _profile_dirty, _health, _stunt_best, _stunt_at]:
 		dict.erase(id)
 	_xp_pending.erase(id)
 	_tool_timer.erase(id)
@@ -350,7 +356,7 @@ func _load_saves() -> void:
 func _store_profile(peer: int) -> void:
 	if _names.has(peer) and _xp.has(peer):
 		_saved[String(_names[peer]).to_lower()] = {
-			"xp": _xp[peer], "money": _money.get(peer, 0), "owned": _owned.get(peer, []), "salt": snappedf(_salt.get(peer, 0.0), 0.01),
+			"xp": _xp[peer], "money": _money.get(peer, 0), "owned": _owned.get(peer, []), "salt": snappedf(_salt.get(peer, 0.0), 0.01), "stunt": _stunt_best.get(peer, 0),
 		}
 		_save_dirty = true
 
@@ -541,6 +547,7 @@ func srv_set_name(player_name: String) -> void:
 	_money[sender] = int(saved.get("money", 0))
 	_owned[sender] = Array(saved.get("owned", [])).filter(func(i): return Village.ITEMS.has(i))
 	_salt[sender] = float(saved.get("salt", 0.0))
+	_stunt_best[sender] = int(saved.get("stunt", 0))
 	# Testiajo (vain palvelimen komentorivillä): kaikki tavarat heti.
 	if Net.cli.has("give"):
 		_owned[sender] = Village.ITEM_ORDER.filter(func(i): return i != "suola" and not Village.ITEMS[i].has("worker"))
@@ -638,12 +645,60 @@ func _cl_health(health: int, push: Vector3, fainted: bool) -> void:
 
 
 ## Palvelin: aura-auto heitti pelaajan. Kaikki näkevät lennon, kunto laskee.
-func ragdoll(peer: int, push: Vector3) -> void:
+func ragdoll(peer: int, push: Vector3, reason := "%s jäi aura-auton alle ja lensi kaaressa hankeen!", damage := 30) -> void:
 	_cl_ragdoll.rpc(peer, push)
 	var player_name: String = _names.get(peer, "Joku")
-	_cl_announce.rpc("%s jäi aura-auton alle ja lensi kaaressa hankeen!" % player_name)
-	_health[peer] = maxi(_health.get(peer, MAX_HEALTH) - 30, 1)
+	_cl_announce.rpc(reason % player_name)
+	_health[peer] = maxi(_health.get(peer, MAX_HEALTH) - damage, 1)
 	_cl_health.rpc_id(peer, _health[peer], Vector3.ZERO, false)
+
+
+## Kelkkastuntti: asiakas kertoo ilmalennon, palvelin laskee pisteet ja pitää ennätystä.
+@rpc("any_peer", "call_local", "reliable")
+func srv_stunt(air: float, spins: int, flips: int, crashed: bool) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == 0:
+		sender = multiplayer.get_unique_id()
+	var player = players.get_node_or_null(str(sender))
+	if player == null or not player.riding or not _names.has(sender):
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - _stunt_at.get(sender, -10.0) < 0.4:
+		return
+	_stunt_at[sender] = now
+	if crashed:
+		var push := Vector3(randf_range(-4, 4), 7.0, randf_range(-4, 4))
+		ragdoll(sender, push, "%s kaatui kelkalla kesken tempun ja lensi hankeen!" if spins + flips > 0 else "%s mokasi alastulon ja lensi kelkan selästä!", 10)
+		return
+	air = clampf(air, 0.0, 4.0)
+	spins = clampi(spins, 0, 4)
+	flips = clampi(flips, 0, 3)
+	var points := roundi(air * 100.0) + spins * 250 + flips * 400
+	var names := []
+	if spins > 0:
+		names.append("%d-spinni" % (spins * 360))
+	if flips > 0:
+		names.append("voltti" if flips == 1 else "%d x voltti" % flips)
+	var trick := " + ".join(names) if not names.is_empty() else "Ilmalento"
+	var best: int = _stunt_best.get(sender, 0)
+	var record := points > best
+	if record:
+		_stunt_best[sender] = points
+		_store_profile(sender)
+	_cl_stunt.rpc_id(sender, "%s! %.1f s ilmassa, %d pistettä" % [trick, air, points], record and best > 0)
+	if record and (spins + flips > 0):
+		_cl_announce.rpc("%s teki kelkalla tempun: %s (%d pistettä), uusi ennätys!" % [_names[sender], trick, points])
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_stunt(text: String, record: bool) -> void:
+	last_stunt = text
+	if dedicated:
+		return
+	Sfx.play_2d(Sfx.COINS)
+	hud.stunt_popup(text + ("\nUusi ennätys!" if record else ""))
 
 
 @rpc("authority", "call_local", "reliable")
@@ -865,6 +920,9 @@ func _run_autotest() -> void:
 	var dance_ok := true
 	if Net.cli.has("tanssi"):
 		dance_ok = await _autotest_dance(me)
+	var stunt_ok := true
+	if Net.cli.has("stuntti"):
+		stunt_ok = await _autotest_stunt(me)
 	var workers_ok := true
 	if Net.cli.has("duunari") and multiplayer.is_server():
 		workers_ok = await _autotest_workers(me)
@@ -906,7 +964,7 @@ func _run_autotest() -> void:
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
 	me.force_active = false
-	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
+	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and stunt_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -972,6 +1030,27 @@ func _autotest_workers(me) -> bool:
 	var fired: bool = hired.is_empty() and workers._workers.is_empty()
 	print("AUTOTEST Duunarit: palkattu %s, kolattu %d, kasassa %d, palkka %s, irtisanottu %s" % [hired_ok, moved, piled, wage_ok, fired])
 	return hired_ok and moved > 0 and piled > 0 and wage_ok and fired
+
+
+## Aja kelkkapuiston isoon hyppyriin ja katso, että ilmalento lasketaan stuntiksi.
+func _autotest_stunt(me) -> bool:
+	var ramp: Array = Kelkkapuisto.RAMPS[3]
+	me.global_position = Vector3(ramp[0], 0.1, ramp[1] + 3.0)
+	me.rotation.y = 0.0
+	if not me.riding:
+		me.toggle_riding()
+	await get_tree().create_timer(0.3).timeout
+	me.force_drive = true
+	me._speed = me.SLED_MAX_SPEED
+	var max_height := 0.0
+	var t := 0.0
+	while t < 6.0 and last_stunt == "":
+		await get_tree().physics_frame
+		t += get_physics_process_delta_time()
+		max_height = maxf(max_height, me.global_position.y)
+	me.force_drive = false
+	print("AUTOTEST Stuntti: korkeimmillaan %.1f m, temppu \"%s\"" % [max_height, last_stunt])
+	return max_height > 2.0 and last_stunt != ""
 
 
 ## Aja moottorikelkalla tielle päin.
