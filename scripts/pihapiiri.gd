@@ -27,7 +27,7 @@ static func build(root: Node3D, snow: Node3D) -> Dictionary:
 	world.name = "Pihapiiri"
 	root.add_child(world)
 
-	_environment(world)
+	var light := _environment(world)
 	_ground(world, hx, hz, road_z)
 	_house(world, Vector3(0, 0, -hz - 5.5))
 	_sauna(world, Vector3(-hx - 5.0, 0, -3.0))
@@ -41,12 +41,12 @@ static func build(root: Node3D, snow: Node3D) -> Dictionary:
 	Kelkkapuisto.build(world)
 	var naava := _forest(world)
 	var snowfall := _snowfall(world)
-	return {"snowfall": snowfall, "world": world, "naava": naava}
+	return {"snowfall": snowfall, "world": world, "naava": naava, "env": light["env"], "sun": light["sun"]}
 
 
 # --- Valaistus ja ympäristö ------------------------------------------------------
 
-static func _environment(world: Node3D) -> void:
+static func _environment(world: Node3D) -> Dictionary:
 	var sky_mat := ProceduralSkyMaterial.new()
 	sky_mat.sky_top_color = Color(0.1, 0.16, 0.34)
 	sky_mat.sky_horizon_color = Color(0.86, 0.56, 0.42)
@@ -92,6 +92,7 @@ static func _environment(world: Node3D) -> void:
 	sun.directional_shadow_max_distance = 70.0
 	sun.shadow_blur = 1.5
 	world.add_child(sun)
+	return {"env": env, "sun": sun}
 
 
 static func _ground(world: Node3D, hx: float, hz: float, road_z: float) -> void:
