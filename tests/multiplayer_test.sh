@@ -67,6 +67,13 @@ else
 	echo "Hirvi epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/moose.log" | head -5; fail=1
 fi
 
+# Tanssit ja aura-auton alle jääminen.
+if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 24)) --autotest --tanssi --aura --save="$LOG/tool.json" >"$LOG/dance.log" 2>&1; then
+	grep -E "Tanssi:|Aura-auto:" "$LOG/dance.log"
+else
+	echo "Tanssi tai aura-auto epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/dance.log" | head -5; fail=1
+fi
+
 # Moottorikelkalla pääsee ajamaan.
 if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 22)) --autotest --kelkka --give --save="$LOG/tool.json" >"$LOG/sled.log" 2>&1; then
 	grep "Moottorikelkka:" "$LOG/sled.log"

@@ -42,6 +42,12 @@ var _last_kick := {}
 var _kick_check := 0.0
 ## Naavapuut [puu, poimintapaikka, korkeus], onko naavaa poimittavissa ja ketkä kantavat naavaa.
 var naava_spots: Array = Pihapiiri.naava_spots()
+## Aura-auto: ohitus alkoi (s, -1 = ei tiellä) ja ketkä se on jo heittänyt.
+const TRUCK_START_X := -45.0
+const TRUCK_END_X := 45.0
+const TRUCK_TIME := 7.0
+var _truck_started := -1.0
+var _truck_hit := {}
 var naava_ready := {}
 var carrying_naava := {}
 
@@ -86,6 +92,8 @@ func trigger(type: int) -> void:
 	var point := Vector3.ZERO
 	match type:
 		AURA_AUTO:
+			_truck_started = Time.get_ticks_msec() / 1000.0
+			_truck_hit.clear()
 			var row: int = snow.cells_z - 3
 			snow.add_snow_line(snow.cell_center(0, row), snow.cell_center(snow.cells_x - 1, row), 0.9, 45)
 			# Naapurien pihateiden suut tukkeutuvat myös.
@@ -277,7 +285,11 @@ func drop_naava(peer: int) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if not moose_active or not multiplayer.has_multiplayer_peer() or not multiplayer.is_server():
+	if not multiplayer.has_multiplayer_peer() or not multiplayer.is_server():
+		return
+	if _truck_started >= 0.0:
+		_check_truck()
+	if not moose_active:
 		return
 	if Time.get_ticks_msec() / 1000.0 > _moose_left_at:
 		_cl_moose.rpc(false, moose_pos, 0.0)
@@ -300,6 +312,26 @@ func _physics_process(delta: float) -> void:
 		push.y = 0.0
 		_cl_moose_kick.rpc(player.global_position)
 		main.hurt(peer, MOOSE_KICK_DAMAGE, push.normalized() if push.length() > 0.01 else Vector3.BACK)
+
+
+## Palvelin: tielle jäänyt kolaaja lentää aura-auton edestä kaaressa hankeen.
+func _check_truck() -> void:
+	var t := Time.get_ticks_msec() / 1000.0 - _truck_started
+	if t > TRUCK_TIME:
+		_truck_started = -1.0
+		return
+	var truck_x := lerpf(TRUCK_START_X, TRUCK_END_X, t / TRUCK_TIME)
+	var main = get_parent()
+	for player in main.players.get_children():
+		var peer := int(String(player.name))
+		var p: Vector3 = player.global_position
+		if _truck_hit.has(peer) or p.y > 2.5 or absf(p.z - Village.ROAD_Z) > 1.9 or p.x < truck_x - 3.5 or p.x > truck_x + 4.8:
+			continue
+		_truck_hit[peer] = true
+		# Auralevy viskaa eteen ja tien sivuun.
+		var side := signf(p.z - Village.ROAD_Z + 0.01)
+		var push := Vector3(randf_range(9.0, 14.0), randf_range(9.0, 12.0), side * randf_range(6.0, 9.0))
+		main.ragdoll(peer, push)
 
 
 func _sender() -> int:

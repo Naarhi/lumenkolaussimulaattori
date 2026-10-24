@@ -139,7 +139,7 @@ func _build_menu() -> void:
 	box.add_child(_button("Yksinpeli", func(): _main().start_singleplayer()))
 	box.add_child(_button("Lopeta", func(): get_tree().quit()))
 
-	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo / kauppa · F kelkka · Esc valikko\nNaapurit maksavat pihateidensä kolaamisesta. Rahalla saa parempia vehkeitä.", 13, Color(0.8, 0.78, 0.7))
+	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo / kauppa · F kelkka · Z X C V tanssit · Esc valikko\nNaapurit maksavat pihateidensä kolaamisesta. Rahalla saa parempia vehkeitä.", 13, Color(0.8, 0.78, 0.7))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(help)
 

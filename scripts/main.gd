@@ -580,6 +580,24 @@ func _cl_health(health: int, push: Vector3, fainted: bool) -> void:
 		Sfx.play_2d(Sfx.OOF)
 
 
+## Palvelin: aura-auto heitti pelaajan. Kaikki näkevät lennon, kunto laskee.
+func ragdoll(peer: int, push: Vector3) -> void:
+	_cl_ragdoll.rpc(peer, push)
+	var player_name: String = _names.get(peer, "Joku")
+	_cl_announce.rpc("%s jäi aura-auton alle ja lensi kaaressa hankeen!" % player_name)
+	_health[peer] = maxi(_health.get(peer, MAX_HEALTH) - 30, 1)
+	_cl_health.rpc_id(peer, _health[peer], Vector3.ZERO, false)
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_ragdoll(peer: int, push: Vector3) -> void:
+	var player = players.get_node_or_null(str(peer))
+	if player:
+		player.start_ragdoll(push)
+	if not dedicated and player:
+		Sfx.play_at(Sfx.OOF, player.global_position + Vector3(0, 1, 0), self)
+
+
 ## Palvelin: Jallu-cola nopeuttaa juojan liikettä ja lapiota.
 func start_boost(peer: int, seconds: float) -> void:
 	_boost_until[peer] = Time.get_ticks_msec() + int(seconds * 1000.0)
@@ -780,6 +798,12 @@ func _run_autotest() -> void:
 	var economy_ok := true
 	if Net.cli.has("economy") and multiplayer.is_server():
 		economy_ok = await _autotest_economy(me)
+	var dance_ok := true
+	if Net.cli.has("tanssi"):
+		dance_ok = await _autotest_dance(me)
+	var truck_ok := true
+	if Net.cli.has("aura") and multiplayer.is_server():
+		truck_ok = await _autotest_truck(me)
 	var moose_ok := true
 	if Net.cli.has("hirvi") and multiplayer.is_server():
 		moose_ok = await _autotest_moose(me)
@@ -796,6 +820,8 @@ func _run_autotest() -> void:
 			var xz: PackedStringArray = Net.cli["pos"].split(",")
 			me.global_position = Vector3(float(xz[0]), 0.05, float(xz[1]))
 			me.head.rotation.x = deg_to_rad(float(Net.cli.get("pitch", "-8")))
+		if Net.cli.has("emote"):
+			me.start_emote(int(Net.cli["emote"]))
 		if Net.cli.has("ride") and not me.riding:
 			me.toggle_riding()
 		if Net.cli.has("pause"):
@@ -813,7 +839,7 @@ func _run_autotest() -> void:
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
 	me.force_active = false
-	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
+	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -880,3 +906,32 @@ func _autotest_moose(me) -> bool:
 	await get_tree().create_timer(0.5).timeout
 	print("AUTOTEST Hirvi: potkaisi %s (kunto %d), naava poimittu %s, syötetty %s, hirvi pihalla %s" % [kicked, hud.health, picked and carrying, fed, events.moose_active])
 	return kicked and picked and carrying and fed and not events.moose_active
+
+
+## Tanssi alkaa näppäimestä ja loppuu liikkumiseen.
+func _autotest_dance(me) -> bool:
+	var press := InputEventKey.new()
+	press.physical_keycode = KEY_Z
+	press.pressed = true
+	me._unhandled_input(press)
+	await get_tree().create_timer(1.0).timeout
+	var dancing: bool = me.emote == me.HUMPPA and me._body.position.y >= 0.0
+	me.start_emote(me.TUULETUS)
+	await get_tree().create_timer(3.5).timeout
+	var ended: bool = me.emote == -1
+	print("AUTOTEST Tanssi: humppa %s, tuuletus loppui itsestään %s" % [dancing, ended])
+	return dancing and ended
+
+
+## Tielle jäänyt kolaaja lentää aura-auton edestä.
+func _autotest_truck(me) -> bool:
+	me.global_position = Vector3(-20.0, 0.05, Village.ROAD_Z)
+	await get_tree().create_timer(0.3).timeout
+	var start: Vector3 = me.global_position
+	events.trigger(events.AURA_AUTO)
+	await get_tree().create_timer(3.0).timeout
+	var flew: bool = me.ragdoll_time > 0.0 or me.global_position.distance_to(start) > 3.0
+	await get_tree().create_timer(3.0).timeout
+	var dist: float = me.global_position.distance_to(start)
+	print("AUTOTEST Aura-auto: lensi %s, matka %.1f m, kunto %d, pystyssä %s" % [flew, dist, hud.health, me.ragdoll_time <= 0.0])
+	return flew and dist > 5.0 and hud.health < MAX_HEALTH and me.ragdoll_time <= 0.0
