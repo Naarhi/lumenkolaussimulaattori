@@ -8,9 +8,9 @@ const Village := preload("res://scripts/village.gd")
 
 const EVENTS := [
 	{"type": AURA_AUTO, "weight": 3.0, "text": "Kunnan aura-auto jyrisi ohi ja puski penkan pihatielle!"},
-	{"type": LUMIMYRSKY, "weight": 2.0, "text": "Lumimyräkkä yllätti! Pihalle sataa lunta silmissä."},
+	{"type": LUMIMYRSKY, "weight": 2.0, "text": "Lumimyräkkä yllätti! Naapurien pihateille sataa lunta silmissä."},
 	{"type": HIRVI, "weight": 1.0, "text": "Hirvi käveli pihalle eikä lähde ilman naavaa! Naavaa kasvaa kuusten alla. Älä mene lähelle tyhjin käsin."},
-	{"type": PERTTI, "weight": 2.0, "text": "Naapurin Pertti tuli moottorikelkalla \"auttamaan\". Pihalla on nyt lumikasoja."},
+	{"type": PERTTI, "weight": 2.0, "text": "Naapurin Pertti kävi moottorikelkalla \"auttamassa\". Naapurien pihateillä on nyt lumikasoja."},
 	{"type": KATTOLUMI, "weight": 2.0, "text": "Katolta romahti lumikuorma kolaajan niskaan!"},
 	{"type": JALLU, "weight": 2.0, "text": "Pertti kurvasi pihaan ja jätti Jallu-colaa! Mene pullon luo ja paina E."},
 ]
@@ -94,13 +94,12 @@ func trigger(type: int) -> void:
 		AURA_AUTO:
 			_truck_started = Time.get_ticks_msec() / 1000.0
 			_truck_hit.clear()
-			var row: int = snow.cells_z - 3
-			snow.add_snow_line(snow.cell_center(0, row), snow.cell_center(snow.cells_x - 1, row), 0.9, 45)
-			# Naapurien pihateiden suut tukkeutuvat myös.
+			# Naapurien pihateiden suut tukkeutuvat (kotipiha on aurattu valmiiksi).
 			for field in main.neighbours.fields:
 				field.add_snow_line(field.cell_center(0, 3), field.cell_center(field.cells_x - 1, 3), 0.9, 35)
 		LUMIMYRSKY:
-			snow.add_snow_everywhere(8, snow.STORM_MAX_DEPTH_CM)
+			for field in main.neighbours.fields:
+				field.add_snow_everywhere(8, field.STORM_MAX_DEPTH_CM)
 		HIRVI:
 			if moose_active:
 				return
@@ -109,7 +108,8 @@ func trigger(type: int) -> void:
 			_moose_left_at = Time.get_ticks_msec() / 1000.0 + MOOSE_MAX_STAY
 		PERTTI:
 			for i in 4:
-				snow.add_snow(snow.random_point(), 0.8, 2500)
+				var field = main.neighbours.fields.pick_random()
+				field.add_snow(field.random_point(), 0.8, 2500)
 		KATTOLUMI:
 			var victims: Array = main.players.get_children()
 			if victims.is_empty():
