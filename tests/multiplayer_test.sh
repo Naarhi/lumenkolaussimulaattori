@@ -25,9 +25,11 @@ kill $SERVER 2>/dev/null
 
 for f in server client1 client2; do
 	echo "=== $f ==="
-	grep -E "AUTOTEST|\[Peli\]|SCRIPT ERROR|ERROR" "$LOG/$f.log" | head -40
+	grep -E "AUTOTEST|\[Peli\]|\[Chat\]|SCRIPT ERROR|ERROR" "$LOG/$f.log" | head -40
 done
 grep -q "AUTOTEST OK" "$LOG/client1.log" && grep -q "AUTOTEST OK" "$LOG/client2.log" || fail=1
 grep -q "SCRIPT ERROR" "$LOG"/*.log && fail=1
+# Palvelin välitti molempien chat-viestit.
+[ "$(grep -c '\[Chat\]' "$LOG/server.log")" -ge 2 ] || { echo "Chat-viestit puuttuvat"; fail=1; }
 if [ $fail -eq 0 ]; then echo "MONINPELITESTI OK"; else echo "MONINPELITESTI EPÄONNISTUI (lokit: $LOG)"; fi
 exit $fail

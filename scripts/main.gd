@@ -12,6 +12,8 @@ const SHOVEL_BITE_CM := 15
 const THROW_DISTANCE := 2.6
 const SHOVEL_COOLDOWN_MS := 450
 const FOOTPRINT_CM := 3
+const CHAT_MAX_LENGTH := 120
+const CHAT_COOLDOWN_MS := 600
 
 # Omat skriptit tyypittämättöminä, jotta niiden funktioita voi kutsua suoraan.
 @onready var snow = $SnowField
@@ -28,6 +30,8 @@ var _carried := {}
 var _xp := {}
 var _last_shovel := {}
 var _footprint_timer := {}
+var _names := {}
+var _last_chat := {}
 
 # Testiajo
 var _autotest_started := false
@@ -81,6 +85,7 @@ func _start_server(is_dedicated: bool) -> void:
 	if not is_dedicated:
 		spawner.spawn(1)
 		_enter_game()
+		srv_set_name(hud.player_name())
 
 
 func _join(address: String) -> void:
@@ -111,13 +116,17 @@ func _on_peer_connected(id: int) -> void:
 	snow.send_full_state(id)
 	spawner.spawn(id)
 	_cl_xp.rpc_id(id, 0, false)
-	_cl_announce.rpc("Uusi kolaaja saapui pihalle!")
+	for peer in _names:
+		_cl_name.rpc_id(id, peer, _names[peer])
 
 
 func _on_peer_disconnected(id: int) -> void:
 	if not multiplayer.is_server():
 		return
 	print("[Peli] Pelaaja %d poistui" % id)
+	if _names.has(id):
+		_cl_announce.rpc("%s lähti pihalta." % _names[id])
+		_names.erase(id)
 	var player := players.get_node_or_null(str(id))
 	if player:
 		player.queue_free()
@@ -127,6 +136,7 @@ func _on_peer_disconnected(id: int) -> void:
 func _on_connected() -> void:
 	print("[Peli] Yhdistetty palvelimelle, oma id %d" % multiplayer.get_unique_id())
 	_enter_game()
+	srv_set_name.rpc_id(1, hud.player_name())
 
 
 func _on_connection_failed() -> void:
@@ -204,6 +214,69 @@ func _add_xp(peer: int, amount: int) -> void:
 	_cl_xp.rpc_id(peer, new_xp, leveled)
 
 
+# --- Nimet ja chat ---------------------------------------------------------------
+
+@rpc("any_peer", "call_remote", "reliable")
+func srv_set_name(player_name: String) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == 0:
+		sender = multiplayer.get_unique_id()
+	var clean := _clean_text(player_name, 16)
+	if clean == "":
+		clean = "Kolaaja%d" % (sender % 1000)
+	var first := not _names.has(sender)
+	_names[sender] = clean
+	_cl_name.rpc(sender, clean)
+	if first:
+		_cl_announce.rpc("%s saapui pihalle!" % clean)
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_name(peer: int, player_name: String) -> void:
+	_names[peer] = player_name
+	var player = players.get_node_or_null(str(peer))
+	if player:
+		player.set_display_name(player_name)
+
+
+func send_chat(text: String) -> void:
+	srv_chat.rpc_id(1, text)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func srv_chat(text: String) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == 0:
+		sender = multiplayer.get_unique_id()
+	var now := Time.get_ticks_msec()
+	if now - int(_last_chat.get(sender, -100000)) < CHAT_COOLDOWN_MS:
+		return
+	_last_chat[sender] = now
+	var clean := _clean_text(text, CHAT_MAX_LENGTH)
+	if clean != "":
+		_cl_chat.rpc(_names.get(sender, "Kolaaja"), clean)
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_chat(from_name: String, text: String) -> void:
+	print("[Chat] %s: %s" % [from_name, text])
+	if not dedicated:
+		hud.chat("%s: %s" % [from_name, text], Color(0.55, 0.8, 1.0))
+
+
+## Poistaa rivinvaihdot ja ohjausmerkit ja lyhentää tekstin.
+static func _clean_text(text: String, max_length: int) -> String:
+	var out := ""
+	for c in text:
+		if c.unicode_at(0) >= 32:
+			out += c
+	return out.strip_edges().left(max_length)
+
+
 func announce(text: String) -> void:
 	_cl_announce.rpc(text)
 
@@ -279,6 +352,7 @@ func _process(_delta: float) -> void:
 
 func _run_autotest() -> void:
 	print("AUTOTEST alkaa, pelaaja %d" % multiplayer.get_unique_id())
+	send_chat("Moi testistä!")
 	await get_tree().create_timer(1.0).timeout
 	var me = local_player()
 	var depth_before: float = snow.depth_at(me.global_position + Vector3(0, 0, -SHOVEL_REACH))
