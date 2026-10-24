@@ -30,6 +30,7 @@ var _xp_bar: ProgressBar
 var _carry_label: Label
 var _popup: Label
 var _quest_title: Label
+var _clock_label: Label
 var _scores: PanelContainer
 var _scores_grid: GridContainer
 var _quest_task: Label
@@ -234,6 +235,8 @@ func _build_game_ui() -> void:
 	skill_box.add_child(_health_label)
 	_naava_label = _label("Naavaa mukana: vie hirvelle", 15, Color(0.7, 0.85, 0.6))
 	_naava_label.visible = false
+	_clock_label = _label("", 14, Color(0.75, 0.8, 0.95))
+	skill_box.add_child(_clock_label)
 	skill_box.add_child(_naava_label)
 	# Tarinan tehtävä vasemmassa yläkulmassa.
 	var quest_panel := PanelContainer.new()
@@ -611,6 +614,10 @@ func splat() -> void:
 	var tween := create_tween()
 	tween.tween_property(s, "color:a", 0.0, 1.2)
 	tween.tween_callback(s.queue_free)
+
+
+func set_clock(text: String) -> void:
+	_clock_label.text = text
 
 
 func set_quest(title: String, task: String) -> void:

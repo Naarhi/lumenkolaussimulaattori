@@ -11,6 +11,7 @@ const WorkersScript := preload("res://scripts/workers.gd")
 const Kelkkapuisto := preload("res://scripts/kelkkapuisto.gd")
 const StoryScript := preload("res://scripts/story.gd")
 const SnowballsScript := preload("res://scripts/snowballs.gd")
+const Vuorokausi := preload("res://scripts/vuorokausi.gd")
 const Kylalaiset := preload("res://scripts/kylalaiset.gd")
 
 const SHOVEL_REACH := 1.1
@@ -44,6 +45,9 @@ var neighbours
 var workers
 var story
 var snowballs
+var daytime
+## Palvelin: vuorokauden alkuhetki (ms).
+var _day_started := 0
 ## Asiakas: oman tarinan vaihe.
 var story_step := 0
 ## Asiakas: omat palkatut duunarit (ITEMS-tunnisteet).
@@ -113,6 +117,10 @@ func _ready() -> void:
 	if not dedicated:
 		scenery = Pihapiiri.build(self, snow)
 		add_child(Kylalaiset.new())
+		daytime = Vuorokausi.new()
+		daytime.name = "Vuorokausi"
+		add_child(daytime)
+		daytime.setup(scenery["env"], scenery["sun"])
 
 	spawner.spawn_function = _spawn_player
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -166,6 +174,9 @@ func _start_server(is_dedicated: bool) -> void:
 		hud.show_menu(self, "Palvelimen käynnistys epäonnistui (portti %d varattu?)" % Net.port())
 		return
 	snow.start_server()
+	_day_started = Time.get_ticks_msec() - int(float(Net.cli.get("kello", "0")) * Vuorokausi.CYCLE * 1000.0)
+	if daytime:
+		daytime.phase = server_phase()
 	neighbours.start_server()
 	events.start_server()
 	_load_saves()
@@ -203,6 +214,7 @@ func _on_peer_connected(id: int) -> void:
 	snow.send_full_state(id)
 	neighbours.send_full_state(id)
 	events.send_state(id)
+	_cl_daytime.rpc_id(id, server_phase())
 	workers.send_state(id)
 	spawner.spawn(id)
 	for peer in _names:
@@ -426,6 +438,16 @@ func _cl_hired(items: Array) -> void:
 	hired = items
 	if not dedicated and hud.shop >= 0:
 		hud._fill_shop()
+
+
+func server_phase() -> float:
+	return fposmod((Time.get_ticks_msec() - _day_started) / 1000.0 / Vuorokausi.CYCLE, 1.0)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _cl_daytime(phase: float) -> void:
+	if daytime:
+		daytime.phase = phase
 
 
 func request_scores() -> void:
