@@ -3,6 +3,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
@@ -21,7 +22,9 @@
 
 ALumiCharacter::ALumiCharacter()
 {
+	PrimaryActorTick.bCanEverTick = true;
 	GetCapsuleComponent()->InitCapsuleSize(34.f, 88.f);
+	GetCharacterMovement()->MaxWalkSpeed = BaseWalkSpeed;
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(GetCapsuleComponent());
@@ -38,6 +41,34 @@ ALumiCharacter::ALumiCharacter()
 	if (CylinderMesh.Succeeded())
 	{
 		PlaceholderBody->SetStaticMesh(CylinderMesh.Object);
+	}
+}
+
+void ALumiCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	ASnowField* Field = GetSnowField();
+	if (!Field)
+	{
+		return;
+	}
+
+	const FVector Feet = GetActorLocation() - FVector(0.f, 0.f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+	const float Depth = Field->GetSnowDepthAt(Feet);
+
+	// Sama laskenta palvelimella ja omalla koneella, joten liikkeen ennustus pysyy samana.
+	const float Alpha = FMath::Clamp(Depth / DeepSnowDepthCm, 0.f, 1.f);
+	GetCharacterMovement()->MaxWalkSpeed = FMath::Lerp(BaseWalkSpeed, DeepSnowWalkSpeed, Alpha);
+
+	if (HasAuthority() && Depth > FootprintDepthCm && GetVelocity().SizeSquared2D() > FMath::Square(50.f))
+	{
+		FootprintTimer -= DeltaSeconds;
+		if (FootprintTimer <= 0.f)
+		{
+			FootprintTimer = 0.35f;
+			Field->RemoveSnow(Feet, 14.f, MAX_int32, FootprintDepthCm);
+		}
 	}
 }
 
