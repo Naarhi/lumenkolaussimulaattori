@@ -29,6 +29,8 @@ var _skill_label: Label
 var _xp_bar: ProgressBar
 var _carry_label: Label
 var _popup: Label
+var _quest_title: Label
+var _quest_task: Label
 var _tool_labels: Array[Label] = []
 var _hint: Label
 var _boost_label: Label
@@ -194,7 +196,7 @@ func _build_game_ui() -> void:
 	_chat_input.visible = false
 	_chat_input.text_submitted.connect(_on_chat_submitted)
 	chat_box.add_child(_chat_input)
-	chat("Tervetuloa pihalle. Kolaa lumet ennen kuin Pertti herää.", Color.WHITE)
+	chat("Tervetuloa kylään! Naapurit maksavat kolauksesta, ja Pertti neuvoo alkuun (tehtävä vasemmalla ylhäällä).", Color.WHITE)
 
 	# Taitopaneeli oikeaan yläkulmaan.
 	var skill_panel := PanelContainer.new()
@@ -231,6 +233,23 @@ func _build_game_ui() -> void:
 	_naava_label = _label("Naavaa mukana: vie hirvelle", 15, Color(0.7, 0.85, 0.6))
 	_naava_label.visible = false
 	skill_box.add_child(_naava_label)
+	# Tarinan tehtävä vasemmassa yläkulmassa.
+	var quest_panel := PanelContainer.new()
+	quest_panel.add_theme_stylebox_override("panel", _osrs_box())
+	quest_panel.position = Vector2(12, 12)
+	quest_panel.custom_minimum_size = Vector2(300, 0)
+	quest_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_game.add_child(quest_panel)
+	var quest_box := VBoxContainer.new()
+	quest_panel.add_child(quest_box)
+	_quest_title = _label("Tehtävä", 17, OSRS_YELLOW)
+	quest_box.add_child(_quest_title)
+	_quest_task = _label("", 14, Color(0.9, 0.88, 0.8))
+	_quest_task.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_quest_task.custom_minimum_size.x = 300
+	quest_box.add_child(_quest_task)
+	quest_panel.visible = false
+	_quest_title.set_meta("panel", quest_panel)
 	_flash = ColorRect.new()
 	_flash.color = Color(0.8, 0.0, 0.0, 0.0)
 	_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -539,6 +558,12 @@ func _close_chat() -> void:
 	typing = false
 	_chat_input.release_focus()
 	_chat_input.visible = false
+
+
+func set_quest(title: String, task: String) -> void:
+	_quest_title.text = "Tehtävä: " + title
+	_quest_task.text = task
+	_quest_title.get_meta("panel").visible = true
 
 
 func stunt_popup(text: String) -> void:

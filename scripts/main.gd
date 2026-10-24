@@ -9,6 +9,8 @@ const Village := preload("res://scripts/village.gd")
 const NeighboursScript := preload("res://scripts/neighbours.gd")
 const WorkersScript := preload("res://scripts/workers.gd")
 const Kelkkapuisto := preload("res://scripts/kelkkapuisto.gd")
+const StoryScript := preload("res://scripts/story.gd")
+const Kylalaiset := preload("res://scripts/kylalaiset.gd")
 
 const SHOVEL_REACH := 1.1
 const SHOVEL_RADIUS := 0.32
@@ -39,6 +41,9 @@ var dedicated := false
 var scenery := {}
 var neighbours
 var workers
+var story
+## Asiakas: oman tarinan vaihe.
+var story_step := 0
 ## Asiakas: omat palkatut duunarit (ITEMS-tunnisteet).
 var hired := []
 ## Kaikki lumikentät: kotipiha ja naapurien pihatiet.
@@ -96,8 +101,12 @@ func _ready() -> void:
 	workers = WorkersScript.new()
 	workers.name = "Duunarit"
 	add_child(workers)
+	story = StoryScript.new()
+	story.name = "Tarina"
+	add_child(story)
 	if not dedicated:
 		scenery = Pihapiiri.build(self, snow)
+		add_child(Kylalaiset.new())
 
 	spawner.spawn_function = _spawn_player
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -202,6 +211,7 @@ func _on_peer_disconnected(id: int) -> void:
 	_write_saves()
 	events.drop_naava(id)
 	workers.fire(id)
+	story.forget(id)
 	if _names.has(id):
 		_cl_announce.rpc("%s lähti pihalta." % _names[id])
 		_names.erase(id)
@@ -295,6 +305,8 @@ func _add_xp(peer: int, amount: int) -> void:
 	_store_profile(peer)
 	var leveled := Skills.level_for_xp(new_xp) > Skills.level_for_xp(old)
 	_cl_xp.rpc_id(peer, new_xp, leveled)
+	if leveled:
+		story.progress(peer, "level:%d" % Skills.level_for_xp(new_xp))
 	if leveled and _names.has(peer):
 		_cl_name.rpc(peer, _names[peer], Skills.level_for_xp(new_xp))
 
@@ -356,7 +368,7 @@ func _load_saves() -> void:
 func _store_profile(peer: int) -> void:
 	if _names.has(peer) and _xp.has(peer):
 		_saved[String(_names[peer]).to_lower()] = {
-			"xp": _xp[peer], "money": _money.get(peer, 0), "owned": _owned.get(peer, []), "salt": snappedf(_salt.get(peer, 0.0), 0.01), "stunt": _stunt_best.get(peer, 0),
+			"xp": _xp[peer], "money": _money.get(peer, 0), "owned": _owned.get(peer, []), "salt": snappedf(_salt.get(peer, 0.0), 0.01), "stunt": _stunt_best.get(peer, 0), "story": story.step_of(peer),
 		}
 		_save_dirty = true
 
@@ -408,6 +420,10 @@ func _cl_hired(items: Array) -> void:
 	hired = items
 	if not dedicated and hud.shop >= 0:
 		hud._fill_shop()
+
+
+func story_changed(peer: int) -> void:
+	_store_profile(peer)
 
 
 func _send_profile(peer: int) -> void:
@@ -484,6 +500,7 @@ func srv_buy(item: String) -> void:
 	_store_profile(sender)
 	_send_profile(sender)
 	_cl_bought.rpc_id(sender, item)
+	story.progress(sender, "bought:" + item)
 	print("[Kauppa] %s osti: %s" % [_names[sender], info["name"]])
 	if not consumable:
 		_cl_announce.rpc("%s osti uuden vehkeen: %s!" % [_names[sender], info["name"]])
@@ -504,6 +521,7 @@ func _srv_hire(sender: int, item: String) -> void:
 		_cl_announce.rpc_id(sender, error)
 		return
 	charge(sender, info["price"])
+	story.progress(sender, "hired")
 	_cl_announce.rpc("%s palkkasi duunarin: %s (%d €/min). Duunari kolaa tilattuja pihateitä ja kasaa lumet." % [_names[sender], info["worker"], info["wage"]])
 
 
@@ -556,6 +574,7 @@ func srv_set_name(player_name: String) -> void:
 	_send_profile(sender)
 	var level := Skills.level_for_xp(xp)
 	_cl_name.rpc(sender, clean, level)
+	story.start(sender, int(saved.get("story", 0)))
 	if xp > 0:
 		_cl_announce.rpc("%s (Kolaus-taso %d) palasi pihalle!" % [clean, level])
 	else:
@@ -688,6 +707,8 @@ func srv_stunt(air: float, spins: int, flips: int, crashed: bool) -> void:
 		_stunt_best[sender] = points
 		_store_profile(sender)
 	_cl_stunt.rpc_id(sender, "%s! %.1f s ilmassa, %d pistettä" % [trick, air, points], record and best > 0)
+	if spins + flips > 0:
+		story.progress(sender, "trick")
 	if record and (spins + flips > 0):
 		_cl_announce.rpc("%s teki kelkalla tempun: %s (%d pistettä), uusi ennätys!" % [_names[sender], trick, points])
 
@@ -920,6 +941,9 @@ func _run_autotest() -> void:
 	var dance_ok := true
 	if Net.cli.has("tanssi"):
 		dance_ok = await _autotest_dance(me)
+	var story_ok := true
+	if Net.cli.has("tarina") and multiplayer.is_server():
+		story_ok = await _autotest_story()
 	var stunt_ok := true
 	if Net.cli.has("stuntti"):
 		stunt_ok = await _autotest_stunt(me)
@@ -964,7 +988,7 @@ func _run_autotest() -> void:
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
 	me.force_active = false
-	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and stunt_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
+	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and dance_ok and truck_ok and workers_ok and stunt_ok and story_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -972,6 +996,7 @@ func _run_autotest() -> void:
 ## Kolaa naapurin pihatie, ota palkkio ja osta sillä MASI rautakaupasta.
 func _autotest_economy(me) -> bool:
 	var start_money := money
+	var step0 := story_step
 	me.select_tool(Tools.MASI)
 	var locked: bool = me.tool == Tools.LAPIO
 	var index := 2
@@ -984,13 +1009,15 @@ func _autotest_economy(me) -> bool:
 		await get_tree().create_timer(0.7).timeout
 	neighbours.debug_clear(index)
 	await get_tree().create_timer(NeighboursScript.CHECK_INTERVAL + 0.5).timeout
-	var paid := money - start_money
+	# Tarinan tehtävistä tulevat palkkiot eivät ole naapurin maksua.
+	var step1 := story_step
+	var paid := money - start_money - _story_rewards(step0, step1)
 	me.global_position = Village.counter_position(Village.RAUTAKAUPPA) + Vector3(0, 0.05, 0)
 	await get_tree().create_timer(0.3).timeout
 	buy("masi")
 	await get_tree().create_timer(0.5).timeout
 	var price: int = Village.ITEMS["masi"]["price"]
-	var bought: bool = "masi" in owned and money == start_money + paid - price
+	var bought: bool = "masi" in owned and money == start_money + paid - price + _story_rewards(step0, story_step)
 	me.select_tool(Tools.MASI)
 	print("AUTOTEST Talous: lukossa %s, palkkio %d €, MASI ostettu %s, rahaa %d €, työkalu %s" % [locked, paid, bought, money, Tools.NAMES[me.tool]])
 	return locked and paid == Village.NEIGHBOURS[index]["pay"] and bought and me.tool == Tools.MASI
@@ -1030,6 +1057,28 @@ func _autotest_workers(me) -> bool:
 	var fired: bool = hired.is_empty() and workers._workers.is_empty()
 	print("AUTOTEST Duunarit: palkattu %s, kolattu %d, kasassa %d, palkka %s, irtisanottu %s" % [hired_ok, moved, piled, wage_ok, fired])
 	return hired_ok and moved > 0 and piled > 0 and wage_ok and fired
+
+
+func _story_rewards(from_step: int, to_step: int) -> int:
+	var total := 0
+	for i in range(from_step, to_step):
+		total += StoryScript.STEPS[i]["reward"]
+	return total
+
+
+## Tarina etenee vain oikeista tapahtumista ja maksaa palkkion.
+func _autotest_story() -> bool:
+	var id := multiplayer.get_unique_id()
+	var start_step := story_step
+	var start_money := money
+	story.progress(id, "paid")
+	story.progress(id, "bought:linko")
+	story.progress(id, "bought:masi")
+	await get_tree().create_timer(0.5).timeout
+	var reward: int = StoryScript.STEPS[0]["reward"] + StoryScript.STEPS[1]["reward"]
+	var saved_step := int(_saved[String(_names[id]).to_lower()].get("story", -1))
+	print("AUTOTEST Tarina: vaihe %d -> %d, palkkiot %d €, tallessa %d" % [start_step, story_step, money - start_money, saved_step])
+	return start_step == 0 and story_step == 2 and money - start_money == reward and saved_step == 2
 
 
 ## Aja kelkkapuiston isoon hyppyriin ja katso, että ilmalento lasketaan stuntiksi.

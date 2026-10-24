@@ -275,6 +275,7 @@ func srv_feed_moose() -> void:
 	_cl_carry_naava.rpc(sender, false)
 	_cl_moose.rpc(false, moose_pos, 0.0)
 	main._add_xp(sender, MOOSE_FEED_XP)
+	main.story.progress(sender, "fed_moose")
 	main.announce("%s syötti hirvelle naavaa. Hirvi lönkytteli tyytyväisenä metsään." % main.display_name_for(sender)[0])
 
 
