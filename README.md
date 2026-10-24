@@ -29,9 +29,11 @@ Kaikki pelin tila on palvelimella. Asiakas lähettää vain painallukset, joten 
 
 ### Lumen materiaali
 
-Ilman materiaalia lumi näkyy harmaana. Tee materiaali `M_Lumi` (esim. Base Color lähes valkoinen, Roughness 0.5–0.7, Subsurface-väri vaalean sininen) tai käytä Fabin Megascans-lumimateriaalia. Raahaa sitten **SnowField**-actor karttaan ja aseta materiaali kohtaan *Snow Material*. Karttaan sijoitettu kenttä korvaa automaattisen. Ruudukko alkaa actorin sijainnista ja jatkuu +X- ja +Y-suuntiin.
+Ilman omaa materiaalia lumi käyttää moottorin perusmateriaalia sinertävän valkoisena (*Fallback Snow Color*). Tee materiaali `M_Lumi` (esim. Base Color lähes valkoinen, Roughness 0.5–0.7, Subsurface-väri vaalean sininen) tai käytä Fabin Megascans-lumimateriaalia. Raahaa sitten **SnowField**-actor karttaan ja aseta materiaali kohtaan *Snow Material*. Karttaan sijoitettu kenttä korvaa automaattisen. Ruudukko alkaa actorin sijainnista ja jatkuu +X- ja +Y-suuntiin.
 
 ### Äänet (OSRS-henki)
+
+Pelissä on valmiina koodissa syntetisoidut 8-bittiset äänet (kauhaisu, heitto, level up -fanfaari ja ilmoitus). Omat äänet korvaavat ne, kun ne asetetaan Blueprintissä.
 
 Tee Blueprint-aliluokat `BP_LumiCharacter`, `BP_LumiPlayerState` ja `BP_LumiGameState`. Aseta niihin äänet (*Scoop Sound*, *Throw Sound*, *Level Up Sound*, *Announcement Sound*) ja aliluokat `BP_LumiGameMode`-luokkaan. Lyhyet, tömäkät retroäänet saa esimerkiksi [jsfxr](https://sfxr.me):llä. RuneScapen omia ääniä ei saa käyttää.
 

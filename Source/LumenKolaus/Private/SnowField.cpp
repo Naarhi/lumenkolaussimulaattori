@@ -1,8 +1,10 @@
 #include "SnowField.h"
 
 #include "KismetProceduralMeshLibrary.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Net/UnrealNetwork.h"
 #include "ProceduralMeshComponent.h"
+#include "UObject/ConstructorHelpers.h"
 
 void FSnowChunk::PostReplicatedAdd(const FSnowChunkArray& InArraySerializer)
 {
@@ -28,6 +30,12 @@ ASnowField::ASnowField()
 	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Mesh->bUseAsyncCooking = true;
 	RootComponent = Mesh;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	if (BasicMaterial.Succeeded())
+	{
+		FallbackBaseMaterial = BasicMaterial.Object;
+	}
 }
 
 void ASnowField::PostInitializeComponents()
@@ -40,6 +48,14 @@ void ASnowField::PostInitializeComponents()
 	ChunkToItem.Init(INDEX_NONE, NumChunksX * NumChunksY);
 
 	UKismetProceduralMeshLibrary::CreateGridMeshTriangles(ChunkSize + 1, ChunkSize + 1, true, GridTriangles);
+
+	ActiveSnowMaterial = SnowMaterial;
+	if (!ActiveSnowMaterial && FallbackBaseMaterial && !IsNetMode(NM_DedicatedServer))
+	{
+		UMaterialInstanceDynamic* Fallback = UMaterialInstanceDynamic::Create(FallbackBaseMaterial, this);
+		Fallback->SetVectorParameterValue(TEXT("Color"), FallbackSnowColor);
+		ActiveSnowMaterial = Fallback;
+	}
 }
 
 void ASnowField::BeginPlay()
@@ -362,9 +378,9 @@ void ASnowField::RebuildChunkMesh(int32 ChunkIndex)
 	else
 	{
 		Mesh->CreateMeshSection(ChunkIndex, Vertices, GridTriangles, Normals, UVs, TArray<FColor>(), TArray<FProcMeshTangent>(), false);
-		if (SnowMaterial)
+		if (ActiveSnowMaterial)
 		{
-			Mesh->SetMaterial(ChunkIndex, SnowMaterial);
+			Mesh->SetMaterial(ChunkIndex, ActiveSnowMaterial);
 		}
 	}
 }

@@ -14,6 +14,7 @@
 #include "InputModifiers.h"
 #include "Kismet/GameplayStatics.h"
 #include "LumiPlayerState.h"
+#include "LumiRetroSounds.h"
 #include "Net/UnrealNetwork.h"
 #include "SnowField.h"
 #include "UObject/ConstructorHelpers.h"
@@ -189,8 +190,15 @@ void ALumiCharacter::ServerShovel_Implementation()
 
 void ALumiCharacter::MulticastShovelFx_Implementation(FVector_NetQuantize Location, bool bScoop)
 {
-	if (USoundBase* Sound = bScoop ? ScoopSound.Get() : ThrowSound.Get())
+	if (IsNetMode(NM_DedicatedServer))
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, Sound, Location);
+		return;
 	}
+
+	USoundBase* Sound = bScoop ? ScoopSound.Get() : ThrowSound.Get();
+	if (!Sound)
+	{
+		Sound = LumiRetroSounds::Create(this, bScoop ? ELumiRetroSound::Scoop : ELumiRetroSound::Throw);
+	}
+	UGameplayStatics::PlaySoundAtLocation(this, Sound, Location);
 }

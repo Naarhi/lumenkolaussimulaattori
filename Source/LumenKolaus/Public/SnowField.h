@@ -104,8 +104,12 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Lumi", meta = (ClampMin = 0))
 	float SnowfallCmPerMinute = 0.5f;
 
+	/** Oma lumimateriaali. Jos tyhjä, käytetään moottorin perusmateriaalia lumen värisenä. */
 	UPROPERTY(EditAnywhere, Category = "Lumi")
 	TObjectPtr<UMaterialInterface> SnowMaterial;
+
+	UPROPERTY(EditAnywhere, Category = "Lumi")
+	FLinearColor FallbackSnowColor = FLinearColor(0.82f, 0.86f, 0.92f);
 
 protected:
 	virtual void PostInitializeComponents() override;
@@ -123,6 +127,13 @@ private:
 
 	UPROPERTY(Replicated)
 	FSnowChunkArray Chunks;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> FallbackBaseMaterial;
+
+	/** Materiaali, jota palat oikeasti käyttävät (SnowMaterial tai sen korvike). */
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> ActiveSnowMaterial;
 
 	int32 NumChunksX = 0;
 	int32 NumChunksY = 0;
