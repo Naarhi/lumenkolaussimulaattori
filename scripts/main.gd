@@ -5,6 +5,8 @@ const PlayerScript := preload("res://scripts/player.gd")
 const Pihapiiri := preload("res://scripts/pihapiiri.gd")
 const Skills := preload("res://scripts/skills.gd")
 const Tools := preload("res://scripts/tools.gd")
+const Village := preload("res://scripts/village.gd")
+const NeighboursScript := preload("res://scripts/neighbours.gd")
 
 const SHOVEL_REACH := 1.1
 const SHOVEL_RADIUS := 0.25
@@ -16,6 +18,13 @@ const FOOTPRINT_CM := 3
 const SALT_DURATION := 600.0
 const CHAT_MAX_LENGTH := 120
 const CHAT_COOLDOWN_MS := 600
+## Suolaa kuluu näin monta kiloa jokaisella sirottelulla (Tools.INTERVAL).
+const SALT_PER_USE := 0.25
+## Moottorikelkka painaa lunta kasaan, mutta ei tätä matalammaksi.
+const SLED_PACK_CM := 10
+const MAX_HEALTH := 100
+const HEALTH_REGEN := 5
+const SPAWN_POINT := Vector3(0, 0.05, 4.0)
 
 # Omat skriptit tyypittämättöminä, jotta niiden funktioita voi kutsua suoraan.
 @onready var snow = $SnowField
@@ -26,12 +35,19 @@ const CHAT_COOLDOWN_MS := 600
 
 var dedicated := false
 var scenery := {}
+var neighbours
+## Kaikki lumikentät: kotipiha ja naapurien pihatiet.
+var fields: Array = []
+## Oman pelaajan rahat, ostetut tavarat ja suolakilot (palvelin lähettää).
+var money := 0
+var owned: Array = []
+var salt := 0.0
 
 # Palvelimen tila pelaajittain.
 var _carried := {}
 var _xp := {}
-# Palvelin: tallennetut XP:t nimen mukaan (pienillä kirjaimilla). Tallennetaan levylle.
-var _saved_xp := {}
+# Palvelin: tallennetut kolaajat nimen mukaan (pienillä kirjaimilla): {"xp", "money", "owned", "salt"}.
+var _saved := {}
 var _save_dirty := false
 var _save_timer := 0.0
 var _levels := {}
@@ -44,6 +60,13 @@ var _tool_timer := {}
 var _xp_pending := {}
 var _xp_flush := 0.0
 var _last_chat := {}
+var _money := {}
+var _owned := {}
+var _salt := {}
+var _profile_dirty := {}
+## Palvelin: kolaajien kunto (0-100). Hirven potku vie kuntoa, ja se palautuu hiljalleen.
+var _health := {}
+var _regen_timer := 0.0
 
 # Testiajo
 var _autotest_started := false
@@ -52,6 +75,10 @@ var _autotest_started := false
 func _ready() -> void:
 	snow.position = Vector3(-snow.size().x * 0.5, 0.0, -snow.size().y * 0.5)
 	dedicated = Net.cli.has("server") or OS.has_feature("dedicated_server")
+	neighbours = NeighboursScript.new()
+	neighbours.name = "Naapurit"
+	add_child(neighbours)
+	fields = [snow] + neighbours.fields
 	if not dedicated:
 		scenery = Pihapiiri.build(self, snow)
 
@@ -90,13 +117,14 @@ func join_game(address: String) -> void:
 ## Esc-valikon "Poistu päävalikkoon": katkaise yhteys tai lopeta oma palvelin.
 func leave_game() -> void:
 	if multiplayer.is_server():
-		_write_xp()
+		for peer in _names:
+			_store_profile(peer)
+		_write_saves()
 	Net.leave()
 	for p in players.get_children():
 		p.queue_free()
-	_carried.clear()
-	_names.clear()
-	_levels.clear()
+	for dict in [_carried, _names, _levels, _xp, _money, _owned, _salt]:
+		dict.clear()
 	hud.show_menu(self)
 
 
@@ -106,8 +134,9 @@ func _start_server(is_dedicated: bool) -> void:
 		hud.show_menu(self, "Palvelimen käynnistys epäonnistui (portti %d varattu?)" % Net.port())
 		return
 	snow.start_server()
+	neighbours.start_server()
 	events.start_server()
-	_load_xp()
+	_load_saves()
 	if not is_dedicated:
 		spawner.spawn(1)
 		_enter_game()
@@ -140,7 +169,8 @@ func _on_peer_connected(id: int) -> void:
 		return
 	print("[Peli] Pelaaja %d liittyi" % id)
 	snow.send_full_state(id)
-	events.send_bottles(id)
+	neighbours.send_full_state(id)
+	events.send_state(id)
 	spawner.spawn(id)
 	for peer in _names:
 		_cl_name.rpc_id(id, peer, _names[peer], Skills.level_for_xp(_xp.get(peer, 0)))
@@ -150,16 +180,17 @@ func _on_peer_disconnected(id: int) -> void:
 	if not multiplayer.is_server():
 		return
 	print("[Peli] Pelaaja %d poistui" % id)
-	_store_xp(id)
-	_write_xp()
+	_store_profile(id)
+	_write_saves()
+	events.drop_naava(id)
 	if _names.has(id):
 		_cl_announce.rpc("%s lähti pihalta." % _names[id])
 		_names.erase(id)
 	var player := players.get_node_or_null(str(id))
 	if player:
 		player.queue_free()
-	_carried.erase(id)
-	_xp.erase(id)
+	for dict in [_carried, _xp, _money, _owned, _salt, _profile_dirty, _health]:
+		dict.erase(id)
 	_xp_pending.erase(id)
 	_tool_timer.erase(id)
 
@@ -222,7 +253,7 @@ func srv_shovel(yaw: float) -> void:
 	var carried: int = _carried.get(sender, 0)
 	if carried == 0:
 		var target := feet + forward * SHOVEL_REACH
-		var removed: int = snow.remove_snow(target, SHOVEL_RADIUS, SHOVEL_CAPACITY, SHOVEL_BITE_CM)
+		var removed := _remove(sender, target, SHOVEL_RADIUS, SHOVEL_CAPACITY, SHOVEL_BITE_CM)
 		if removed > 0:
 			_carried[sender] = removed
 			_cl_carried.rpc(sender, removed)
@@ -230,7 +261,7 @@ func srv_shovel(yaw: float) -> void:
 			print("[Peli] Pelaaja %d kauhoi %d" % [sender, removed])
 	else:
 		var target := feet + forward * THROW_DISTANCE
-		snow.add_snow(target, SHOVEL_RADIUS * 1.6, carried)
+		_add(target, SHOVEL_RADIUS * 1.6, carried)
 		_carried[sender] = 0
 		_cl_carried.rpc(sender, 0)
 		_cl_fx.rpc(target, false)
@@ -242,50 +273,185 @@ func _add_xp(peer: int, amount: int) -> void:
 	var old: int = _xp.get(peer, 0)
 	var new_xp := old + amount
 	_xp[peer] = new_xp
-	_store_xp(peer)
+	_store_profile(peer)
 	var leveled := Skills.level_for_xp(new_xp) > Skills.level_for_xp(old)
 	_cl_xp.rpc_id(peer, new_xp, leveled)
 	if leveled and _names.has(peer):
 		_cl_name.rpc(peer, _names[peer], Skills.level_for_xp(new_xp))
 
 
-# --- XP:n tallennus ----------------------------------------------------------------
+# --- Lumikentät -------------------------------------------------------------------
+
+## Lumikenttä, jonka alueella piste on, tai null (tie, metsä, kaupat).
+func field_at(pos: Vector3):
+	for field in fields:
+		if field.contains(pos):
+			return field
+	return null
+
+
+func depth_at(pos: Vector3) -> float:
+	var field = field_at(pos)
+	return field.depth_at(pos) if field else 0.0
+
+
+## Palvelin: poista lunta siltä kentältä, jolla piste on. Naapurin pihatiellä työ kirjataan pelaajalle.
+func _remove(peer: int, pos: Vector3, radius: float, max_amount: int, max_per_cell: int) -> int:
+	var field = field_at(pos)
+	if field == null:
+		return 0
+	var removed: int = field.remove_snow(pos, radius, max_amount, max_per_cell)
+	if peer != 0:
+		neighbours.credit(field, peer, removed)
+	return removed
+
+
+## Palvelin: kasaa lunta. Pihojen ulkopuolelle heitetty lumi katoaa hankeen.
+func _add(pos: Vector3, radius: float, amount: int) -> void:
+	var field = field_at(pos)
+	if field:
+		field.add_snow(pos, radius, amount)
+
+
+# --- Rahat, tavarat ja tallennus ------------------------------------------------------
 
 func _save_path() -> String:
 	return Net.cli.get("save", "user://kolaajat.json")
 
 
-func _load_xp() -> void:
+func _load_saves() -> void:
 	var file := FileAccess.open(_save_path(), FileAccess.READ)
 	if file == null:
 		return
 	var data = JSON.parse_string(file.get_as_text())
 	if data is Dictionary:
 		for key in data:
-			_saved_xp[str(key)] = int(data[key])
-	print("[Peli] Ladattu %d kolaajan XP:t tiedostosta %s" % [_saved_xp.size(), ProjectSettings.globalize_path(_save_path())])
+			# Vanhoissa tallennuksissa oli pelkkä XP-luku.
+			var entry = data[key]
+			_saved[str(key)] = entry if entry is Dictionary else {"xp": int(entry)}
+	print("[Peli] Ladattu %d kolaajan tiedot tiedostosta %s" % [_saved.size(), ProjectSettings.globalize_path(_save_path())])
 
 
-func _store_xp(peer: int) -> void:
+func _store_profile(peer: int) -> void:
 	if _names.has(peer) and _xp.has(peer):
-		_saved_xp[String(_names[peer]).to_lower()] = _xp[peer]
+		_saved[String(_names[peer]).to_lower()] = {
+			"xp": _xp[peer], "money": _money.get(peer, 0), "owned": _owned.get(peer, []), "salt": snappedf(_salt.get(peer, 0.0), 0.01),
+		}
 		_save_dirty = true
 
 
-func _write_xp() -> void:
+func _write_saves() -> void:
 	if not _save_dirty:
 		return
 	_save_dirty = false
 	var file := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if file:
-		file.store_string(JSON.stringify(_saved_xp, "\t"))
+		file.store_string(JSON.stringify(_saved, "\t"))
 	else:
-		push_warning("XP:n tallennus epäonnistui: %s" % _save_path())
+		push_warning("Kolaajien tallennus epäonnistui: %s" % _save_path())
 
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE:
-		_write_xp()
+		for peer in _names:
+			_store_profile(peer)
+		_write_saves()
+
+
+## Palvelin: anna pelaajalle rahaa (naapurin palkkio).
+func add_money(peer: int, amount: int) -> void:
+	_money[peer] = _money.get(peer, 0) + amount
+	_store_profile(peer)
+	_send_profile(peer)
+	_cl_cash.rpc_id(peer, amount)
+
+
+func _send_profile(peer: int) -> void:
+	_profile_dirty.erase(peer)
+	_cl_profile.rpc_id(peer, _money.get(peer, 0), _owned.get(peer, []), _salt.get(peer, 0.0))
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_profile(new_money: int, new_owned: Array, new_salt: float) -> void:
+	money = new_money
+	owned = new_owned
+	salt = new_salt
+	hud.set_inventory(money, owned, salt)
+	var me = local_player()
+	if me and not has_tool(me.tool):
+		me.select_tool(Tools.LAPIO)
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_cash(amount: int) -> void:
+	if not dedicated:
+		Sfx.play_2d(Sfx.COINS)
+		hud.chat("Sait %d €." % amount, Color(0.5, 1.0, 0.4))
+
+
+## Asiakas: onko oma pelaaja ostanut työkalun (lapio on aina, suolaa pitää olla säkissä).
+func has_tool(tool: int) -> bool:
+	if tool == Tools.SUOLA:
+		return salt > 0.0
+	var item := Village.item_for_tool(tool)
+	return item == "" or item in owned
+
+
+## Palvelin: saako pelaaja käyttää työkalua.
+func _may_use(peer: int, tool: int) -> bool:
+	if tool == Tools.SUOLA:
+		return _salt.get(peer, 0.0) > 0.0
+	var item := Village.item_for_tool(tool)
+	return item == "" or item in _owned.get(peer, [])
+
+
+func buy(item: String) -> void:
+	srv_buy.rpc_id(1, item)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func srv_buy(item: String) -> void:
+	if not multiplayer.is_server() or not Village.ITEMS.has(item):
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == 0:
+		sender = multiplayer.get_unique_id()
+	var player = players.get_node_or_null(str(sender))
+	var info: Dictionary = Village.ITEMS[item]
+	if player == null or Village.shop_near(player.global_position) != info["shop"] or not _names.has(sender):
+		return
+	var list: Array = _owned.get(sender, [])
+	var consumable := info.has("salt")
+	if not consumable and item in list:
+		return
+	var price: int = info["price"]
+	if _money.get(sender, 0) < price:
+		_cl_announce.rpc_id(sender, "Rahat eivät riitä: %s maksaa %d €." % [info["name"], price])
+		return
+	_money[sender] -= price
+	if consumable:
+		_salt[sender] = _salt.get(sender, 0.0) + info["salt"]
+	else:
+		list.append(item)
+		_owned[sender] = list
+	_store_profile(sender)
+	_send_profile(sender)
+	_cl_bought.rpc_id(sender, item)
+	print("[Kauppa] %s osti: %s" % [_names[sender], info["name"]])
+	if not consumable:
+		_cl_announce.rpc("%s osti uuden vehkeen: %s!" % [_names[sender], info["name"]])
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_bought(item: String) -> void:
+	if dedicated:
+		return
+	Sfx.play_2d(Sfx.COINS)
+	var info: Dictionary = Village.ITEMS[item]
+	hud.chat("Ostit: %s (%d €)." % [info["name"], info["price"]], Color(0.5, 1.0, 0.4))
+	var me = local_player()
+	if me and info.has("tool"):
+		me.select_tool(info["tool"])
 
 
 # --- Nimet ja chat ---------------------------------------------------------------
@@ -310,9 +476,18 @@ func srv_set_name(player_name: String) -> void:
 	if taken:
 		clean = "%s%d" % [clean.left(13), randi_range(10, 99)]
 	_names[sender] = clean
-	var xp: int = _saved_xp.get(clean.to_lower(), 0)
+	var saved: Dictionary = _saved.get(clean.to_lower(), {})
+	var xp := int(saved.get("xp", 0))
 	_xp[sender] = xp
+	_money[sender] = int(saved.get("money", 0))
+	_owned[sender] = Array(saved.get("owned", [])).filter(func(i): return Village.ITEMS.has(i))
+	_salt[sender] = float(saved.get("salt", 0.0))
+	# Testiajo (vain palvelimen komentorivillä): kaikki tavarat heti.
+	if Net.cli.has("give"):
+		_owned[sender] = Village.ITEM_ORDER.filter(func(i): return i != "suola")
+		_salt[sender] = 50.0
 	_cl_xp.rpc_id(sender, xp, false)
+	_send_profile(sender)
 	var level := Skills.level_for_xp(xp)
 	_cl_name.rpc(sender, clean, level)
 	if xp > 0:
@@ -371,6 +546,38 @@ static func _clean_text(text: String, max_length: int) -> String:
 	return out.strip_edges().left(max_length)
 
 
+## Palvelin: vahinko ja tönäisy (hirven potku). Kunnon loppuessa kolaaja pyörtyy ja herää kotipihalta.
+func hurt(peer: int, damage: int, push: Vector3) -> void:
+	var health: int = _health.get(peer, MAX_HEALTH) - damage
+	var fainted := health <= 0
+	var player_name: String = _names.get(peer, "Joku")
+	if fainted:
+		health = MAX_HEALTH
+		events.drop_naava(peer)
+		_cl_announce.rpc("Hirvi potkaisi kolaajan %s hankeen. %s pyörtyi ja heräsi kotipihalta." % [player_name, player_name])
+	else:
+		_cl_announce.rpc("Hirvi potkaisi kolaajaa %s! Hae naavaa ennen kuin menet lähelle." % player_name)
+	_health[peer] = health
+	_cl_health.rpc_id(peer, health, push, fainted)
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_health(health: int, push: Vector3, fainted: bool) -> void:
+	hud.set_health(health, push != Vector3.ZERO)
+	var me = local_player()
+	if me == null:
+		return
+	if fainted:
+		if me.riding:
+			me.toggle_riding()
+		me.global_position = SPAWN_POINT
+		me.velocity = Vector3.ZERO
+	elif push != Vector3.ZERO:
+		me.knockback(push * 9.0 + Vector3(0, 4.0, 0))
+	if push != Vector3.ZERO and not dedicated:
+		Sfx.play_2d(Sfx.OOF)
+
+
 ## Palvelin: Jallu-cola nopeuttaa juojan liikettä ja lapiota.
 func start_boost(peer: int, seconds: float) -> void:
 	_boost_until[peer] = Time.get_ticks_msec() + int(seconds * 1000.0)
@@ -399,7 +606,14 @@ func _physics_process(delta: float) -> void:
 		_save_timer -= delta
 		if _save_timer <= 0.0:
 			_save_timer = 10.0
-			_write_xp()
+			_write_saves()
+		_regen_timer -= delta
+		if _regen_timer <= 0.0:
+			_regen_timer = 3.0
+			for peer in _health.keys():
+				if _health[peer] < MAX_HEALTH:
+					_health[peer] = mini(_health[peer] + HEALTH_REGEN, MAX_HEALTH)
+					_cl_health.rpc_id(peer, _health[peer], Vector3.ZERO, false)
 	if not Net.cli.has("autotest") or _autotest_started:
 		return
 	if local_player():
@@ -412,7 +626,7 @@ func _server_tools(delta: float) -> void:
 	for child in players.get_children():
 		var id := int(String(child.name))
 		var tool: int = child.tool
-		if not child.tool_active or tool == Tools.LAPIO:
+		if not child.tool_active or tool == Tools.LAPIO or child.riding or not _may_use(id, tool):
 			_tool_timer[id] = 0.0
 			continue
 		var timer: float = _tool_timer.get(id, 0.0) - delta
@@ -428,23 +642,29 @@ func _server_tools(delta: float) -> void:
 		match tool:
 			Tools.MASI:
 				# Kola työntää lunta edellään. Pihan reunan yli työnnetty lumi katoaa.
-				var moved: int = snow.remove_snow(feet + forward * 0.75, 0.4, 100000, 10)
+				var moved := _remove(id, feet + forward * 0.75, 0.4, 100000, 10)
 				if moved > 0:
-					snow.add_snow(feet + forward * 1.45, 0.45, moved)
+					_add(feet + forward * 1.45, 0.45, moved)
 				xp = moved / 150.0
 			Tools.LINKO:
 				# Linko syö lumen edestä ja lennättää sen kuusi metriä oikealle eteen.
-				var blown: int = snow.remove_snow(feet + forward * 0.8, 0.32, 100000, 12)
+				var blown := _remove(id, feet + forward * 0.8, 0.32, 100000, 12)
 				if blown > 0:
 					var throw_dir := (forward * 0.55 + right * 0.85).normalized()
-					snow.add_snow(feet + throw_dir * 6.5, 1.0, blown)
+					_add(feet + throw_dir * 6.5, 1.0, blown)
 				xp = blown / 60.0
 			Tools.LIEKKI:
-				var melted: int = snow.remove_snow(feet + forward * 1.6, 0.45, 100000, 3)
-				melted += snow.remove_snow(feet + forward * 2.6, 0.6, 100000, 2)
+				var melted := _remove(id, feet + forward * 1.6, 0.45, 100000, 3)
+				melted += _remove(id, feet + forward * 2.6, 0.6, 100000, 2)
 				xp = melted / 90.0
 			Tools.SUOLA:
-				snow.salt_area(feet + forward * 1.2, 0.7, SALT_DURATION)
+				var spot := feet + forward * 1.2
+				var field = field_at(spot)
+				if field:
+					var cells: int = field.salt_area(spot, 0.7, SALT_DURATION)
+					neighbours.credit(field, id, cells * 3.0)
+				_salt[id] = maxf(_salt.get(id, 0.0) - SALT_PER_USE, 0.0)
+				_profile_dirty[id] = true
 		_xp_pending[id] = _xp_pending.get(id, 0.0) + xp
 	_xp_flush -= delta
 	if _xp_flush <= 0.0:
@@ -454,6 +674,9 @@ func _server_tools(delta: float) -> void:
 			if whole > 0:
 				_xp_pending[id] -= whole
 				_add_xp(id, whole)
+		for id in _profile_dirty.keys():
+			_store_profile(id)
+			_send_profile(id)
 
 
 ## Liikkuvat pelaajat painavat lunta kasaan (jalanjäljet).
@@ -465,9 +688,15 @@ func _server_footprints(delta: float) -> void:
 		var moved := Vector2(player.global_position.x - last.x, player.global_position.z - last.z).length()
 		player.set_meta("last_pos", player.global_position)
 		var timer: float = _footprint_timer.get(id, 0.0) - delta
-		if moved > 0.01 and snow.depth_at(player.global_position) > FOOTPRINT_CM and timer <= 0.0:
+		var depth := depth_at(player.global_position)
+		if player.riding:
+			# Kelkan telamatto painaa leveän uran, mutta ei kolaa pihaa puhtaaksi.
+			if moved > 0.01 and depth > SLED_PACK_CM and timer <= 0.0:
+				timer = 0.1
+				_remove(0, player.global_position, 0.45, 100000, mini(4, int(depth) - SLED_PACK_CM))
+		elif moved > 0.01 and depth > FOOTPRINT_CM and timer <= 0.0:
 			timer = 0.35
-			snow.remove_snow(player.global_position, 0.14, 100000, FOOTPRINT_CM)
+			_remove(0, player.global_position, 0.14, 100000, FOOTPRINT_CM)
 		_footprint_timer[id] = timer
 
 
@@ -523,7 +752,7 @@ func _run_autotest() -> void:
 	var tool := int(Net.cli.get("tool", "0"))
 	# Mittauspiste työkalun vaikutusalueelta (katse -Z-suuntaan).
 	var probe := {Tools.LAPIO: SHOVEL_REACH, Tools.MASI: 0.75, Tools.LINKO: 0.8, Tools.LIEKKI: 1.6, Tools.SUOLA: 1.2}[tool] as float
-	var depth_before: float = snow.depth_at(me.global_position + Vector3(0, 0, -probe))
+	var depth_before := depth_at(me.global_position + Vector3(0, 0, -probe))
 	if tool == Tools.LAPIO:
 		for i in 6:
 			me.request_shovel()
@@ -533,7 +762,7 @@ func _run_autotest() -> void:
 		me.force_active = true
 		await get_tree().create_timer(4.0).timeout
 	await get_tree().create_timer(1.0).timeout
-	var depth_after: float = snow.depth_at(me.global_position + Vector3(0, 0, -probe))
+	var depth_after := depth_at(me.global_position + Vector3(0, 0, -probe))
 	var jallu_ok := true
 	if Net.cli.has("jallu") and multiplayer.is_server():
 		events.trigger(events.JALLU)
@@ -546,21 +775,106 @@ func _run_autotest() -> void:
 		jallu_ok = drank and me.boost_time > 0.0 and events.bottles.size() == events.BOTTLES_PER_DELIVERY - 1
 		print("AUTOTEST Jallu-cola: joi %s, boostia %.1f s, pulloja jäljellä %d" % [drank, me.boost_time, events.bottles.size()])
 	print("AUTOTEST %s: lumi ennen %.0f cm, jälkeen %.0f cm, XP %d" % [Tools.NAMES[tool], depth_before, depth_after, hud.xp])
+	var economy_ok := true
+	if Net.cli.has("economy") and multiplayer.is_server():
+		economy_ok = await _autotest_economy(me)
+	var moose_ok := true
+	if Net.cli.has("hirvi") and multiplayer.is_server():
+		moose_ok = await _autotest_moose(me)
+	var sled_ok := true
+	if Net.cli.has("kelkka"):
+		sled_ok = await _autotest_sled(me)
 	if Net.cli.has("screenshot"):
 		me.rotation.y = deg_to_rad(float(Net.cli.get("yaw", "0")))
 		me.head.rotation.x = -0.35
 		if Net.cli.has("jallu") and not events.bottles.is_empty():
 			me.global_position = events.bottles.values()[0] + Vector3(0, 0.05, 1.3)
 			me.head.rotation.x = -0.6
+		if Net.cli.has("pos"):
+			var xz: PackedStringArray = Net.cli["pos"].split(",")
+			me.global_position = Vector3(float(xz[0]), 0.05, float(xz[1]))
+			me.head.rotation.x = deg_to_rad(float(Net.cli.get("pitch", "-8")))
+		if Net.cli.has("ride") and not me.riding:
+			me.toggle_riding()
 		if Net.cli.has("pause"):
 			hud._open_pause()
 		if Net.cli.has("event") and multiplayer.is_server():
 			events.trigger(int(Net.cli["event"]))
+			if events.moose_active:
+				# Katsotaan hirveä sivulta.
+				await get_tree().create_timer(0.2).timeout
+				me.global_position = events.moose_pos + Vector3(4.5, 0.05, -1.0)
+				me.rotation.y = deg_to_rad(80)
+				me.head.rotation.x = -0.1
 		await get_tree().create_timer(float(Net.cli.get("wait", "1.5"))).timeout
 		var image := get_viewport().get_texture().get_image()
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
 	me.force_active = false
-	var ok: bool = jallu_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
+	var ok: bool = jallu_ok and economy_ok and sled_ok and moose_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
+
+
+## Kolaa naapurin pihatie, ota palkkio ja osta sillä MASI rautakaupasta.
+func _autotest_economy(me) -> bool:
+	var start_money := money
+	me.select_tool(Tools.MASI)
+	var locked: bool = me.tool == Tools.LAPIO
+	var index := 2
+	var field = neighbours.fields[index]
+	me.global_position = field.to_global(Vector3(field.size().x * 0.5, 0.05, 3.0))
+	me.rotation.y = 0.0
+	await get_tree().create_timer(0.3).timeout
+	for i in 4:
+		me.request_shovel()
+		await get_tree().create_timer(0.7).timeout
+	neighbours.debug_clear(index)
+	await get_tree().create_timer(NeighboursScript.CHECK_INTERVAL + 0.5).timeout
+	var paid := money - start_money
+	me.global_position = Village.counter_position(Village.RAUTAKAUPPA) + Vector3(0, 0.05, 0)
+	await get_tree().create_timer(0.3).timeout
+	buy("masi")
+	await get_tree().create_timer(0.5).timeout
+	var price: int = Village.ITEMS["masi"]["price"]
+	var bought: bool = "masi" in owned and money == start_money + paid - price
+	me.select_tool(Tools.MASI)
+	print("AUTOTEST Talous: lukossa %s, palkkio %d €, MASI ostettu %s, rahaa %d €, työkalu %s" % [locked, paid, bought, money, Tools.NAMES[me.tool]])
+	return locked and paid == Village.NEIGHBOURS[index]["pay"] and bought and me.tool == Tools.MASI
+
+
+## Aja moottorikelkalla tielle päin.
+func _autotest_sled(me) -> bool:
+	me.rotation.y = PI
+	var start: Vector3 = me.global_position
+	me.toggle_riding()
+	me.force_drive = true
+	await get_tree().create_timer(2.5).timeout
+	me.force_drive = false
+	var dist := Vector2(me.global_position.x - start.x, me.global_position.z - start.z).length()
+	var rode: bool = me.riding
+	print("AUTOTEST Moottorikelkka: kyydissä %s, ajettu %.1f m" % [rode, dist])
+	if not Net.cli.has("ride"):
+		me.toggle_riding()
+	return rode and dist > 8.0
+
+
+## Hirvi potkaisee tyhjin käsin tulevaa, mutta lähtee, kun sille tuo naavaa.
+func _autotest_moose(me) -> bool:
+	events.trigger(events.HIRVI)
+	await get_tree().create_timer(0.3).timeout
+	me.global_position = events.moose_pos + Vector3(1.6, 0.05, 0)
+	await get_tree().create_timer(1.0).timeout
+	var kicked: bool = hud.health < MAX_HEALTH
+	var spot: Vector3 = events.naava_spots[0][1]
+	me.global_position = spot + Vector3(0, 0.05, 0)
+	await get_tree().create_timer(0.3).timeout
+	var picked: bool = me.interact() == "naava"
+	await get_tree().create_timer(0.3).timeout
+	var carrying: bool = events.carrying_naava.has(multiplayer.get_unique_id())
+	me.global_position = events.moose_pos + Vector3(2.0, 0.05, 0.8)
+	await get_tree().create_timer(0.3).timeout
+	var fed: bool = me.interact() == "hirvi"
+	await get_tree().create_timer(0.5).timeout
+	print("AUTOTEST Hirvi: potkaisi %s (kunto %d), naava poimittu %s, syötetty %s, hirvi pihalla %s" % [kicked, hud.health, picked and carrying, fed, events.moose_active])
+	return kicked and picked and carrying and fed and not events.moose_active

@@ -1,7 +1,7 @@
 extends Node
 ## Old School RuneScapen henkiset 8-bittiset äänet, jotka syntetisoidaan koodissa.
 
-enum { SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP }
+enum { SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP, COINS, SLED, OOF }
 
 const MIX_RATE := 22050
 const BUS := "Efektit"
@@ -14,7 +14,7 @@ var _buf := PackedFloat32Array()
 
 func _ready() -> void:
 	_setup_buses()
-	for kind in [SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP]:
+	for kind in [SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP, COINS, SLED, OOF]:
 		_streams[kind] = _make_stream(kind)
 
 
@@ -115,6 +115,20 @@ func _make_stream(kind: int) -> AudioStreamWAV:
 		BURP:
 			_square(0.0, 0.45, 110.0, 70.0, 0.3, 0.35)
 			_noise(rng, 0.0, 0.45, 0.2, 0.2)
+		COINS:
+			# Kolikoiden kilinä kuten OSRS:n kaupassa
+			_square(0.0, 0.07, 1318.5, 1318.5, 0.16, 0.5)
+			_square(0.07, 0.07, 1760.0, 1760.0, 0.16, 0.5)
+			_square(0.14, 0.18, 2093.0, 2093.0, 0.12, 0.5)
+		SLED:
+			# Moottorikelkan kaksitahtinen pärinä, lingon moottoria kirkkaampi
+			for i in 8:
+				_square(i * 0.035, 0.035, 150.0, 130.0, 0.14, 0.35)
+			_noise(rng, 0.0, 0.28, 0.4, 0.1)
+		OOF:
+			# Hirven kavio osuu: tömähdys ja "uuh"
+			_noise(rng, 0.0, 0.08, 0.6, 0.5)
+			_square(0.05, 0.3, 220.0, 120.0, 0.25, 0.4)
 		SCRAPE:
 			_noise(rng, 0.0, 0.25, 0.5, 0.25)
 			_square(0.0, 0.25, 140.0, 120.0, 0.05, 0.15)

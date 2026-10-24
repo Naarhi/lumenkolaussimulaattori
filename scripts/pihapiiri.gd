@@ -3,12 +3,14 @@ extends RefCounted
 ## aita, postilaatikko, katulamppu, kuuset ja tie. Lisäksi satunnaistapahtumien ajoneuvot ja hirvi.
 
 const SnowField := preload("res://scripts/snow_field.gd")
+const Village := preload("res://scripts/village.gd")
+const Tools := preload("res://scripts/tools.gd")
 
 const SNOW_LEVEL := 0.30
 const FALU_RED := Color(0.52, 0.11, 0.07)
 const WHITE_TRIM := Color(0.92, 0.92, 0.88)
-const ROAD_HALF_WIDTH := 1.6
-const ROAD_OFFSET := 3.2
+const ROAD_HALF_WIDTH := Village.ROAD_HALF_WIDTH
+const ROAD_OFFSET := Village.ROAD_Z - 9.6
 
 static var _materials := {}
 static var _snow_material: StandardMaterial3D
@@ -31,9 +33,13 @@ static func build(root: Node3D, snow: Node3D) -> Dictionary:
 	_fence(world, hx + 1.2, -hz, hz)
 	_mailbox(world, Vector3(4.5, 0, road_z - ROAD_HALF_WIDTH - 0.5))
 	_street_lamp(world, Vector3(-6.0, 0, road_z - ROAD_HALF_WIDTH - 0.6))
-	_forest(world, hx, hz, road_z)
+	for i in Village.NEIGHBOURS.size():
+		_neighbour(world, i)
+	for i in Village.SHOPS.size():
+		_shop(world, i)
+	var naava := _forest(world)
 	var snowfall := _snowfall(world)
-	return {"snowfall": snowfall, "world": world}
+	return {"snowfall": snowfall, "world": world, "naava": naava}
 
 
 # --- Valaistus ja ympäristö ------------------------------------------------------
@@ -126,7 +132,7 @@ static func _ground(world: Node3D, hx: float, hz: float, road_z: float) -> void:
 	_snow_slab(world, Rect2(-far, -hz, far - hx, road_near + hz))               # länsi
 	_snow_slab(world, Rect2(hx, -hz, far - hx, road_near + hz))                 # itä
 	_snow_slab(world, Rect2(-hx, hz, 2 * hx, road_near - hz))                   # pihan ja tien väli
-	_snow_slab(world, Rect2(-far, road_far, 2 * far, far - road_far))           # tien takana
+	_snow_slab_with_holes(world, Rect2(-far, road_far, 2 * far, far - road_far), _plots())  # tien takana
 
 	# Aurattu tie: tiivistynyt harmaa lumi ja aurausvallit.
 	var road := _box(world, Vector3(2 * far, 0.06, 2 * ROAD_HALF_WIDTH), Vector3(0, 0.03, road_z), Color(0.55, 0.56, 0.6), 0.6)
@@ -155,6 +161,38 @@ static func _snow_slab(world: Node3D, rect: Rect2) -> void:
 	var mat := snow_material()
 	mi.material_override = mat
 	mi.position = Vector3(rect.position.x + rect.size.x * 0.5, SNOW_LEVEL * 0.5, rect.position.y + rect.size.y * 0.5)
+	world.add_child(mi)
+
+
+## Tien eteläpuolen auratut alueet: naapurien pihatiet ja kauppojen pihat (alkavat tien reunasta).
+static func _plots() -> Array:
+	var holes := []
+	for i in Village.NEIGHBOURS.size():
+		var n: Dictionary = Village.NEIGHBOURS[i]
+		holes.append(Rect2(n["x"] - n["w"] * 0.5, Village.ROAD_FAR, n["w"], n["d"]))
+	for shop in Village.SHOPS:
+		holes.append(Rect2(shop["x"] - 6.0, Village.ROAD_FAR, 12.0, Village.SHOP_SETBACK + 1.0))
+	holes.sort_custom(func(a: Rect2, b: Rect2): return a.position.x < b.position.x)
+	return holes
+
+
+## Lumilaatta, johon jätetään reiät. Reiät alkavat laatan pohjoisreunasta.
+static func _snow_slab_with_holes(world: Node3D, rect: Rect2, holes: Array) -> void:
+	var x := rect.position.x
+	for hole in holes:
+		_snow_slab(world, Rect2(x, rect.position.y, hole.position.x - x, rect.size.y))
+		_snow_slab(world, Rect2(hole.position.x, hole.end.y, hole.size.x, rect.end.y - hole.end.y))
+		x = hole.end.x
+	_snow_slab(world, Rect2(x, rect.position.y, rect.end.x - x, rect.size.y))
+
+
+static func _gravel(world: Node3D, rect: Rect2) -> void:
+	var mi := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = rect.size
+	mi.mesh = plane
+	mi.material_override = _mat(Color(0.36, 0.33, 0.3), 0.95)
+	mi.position = Vector3(rect.get_center().x, 0.005, rect.get_center().y)
 	world.add_child(mi)
 
 
@@ -370,12 +408,20 @@ static func _street_lamp(world: Node3D, at: Vector3) -> void:
 	world.add_child(light)
 
 
-static func _forest(world: Node3D, hx: float, hz: float, road_z: float) -> void:
+static var _tree_cache: Array = []
+
+
+## Metsän kuuset [sijainti, korkeus, kierto]. Sama siemen kaikilla, joten palvelin tietää puut ilman maisemaa.
+static func tree_spots() -> Array:
+	if not _tree_cache.is_empty():
+		return _tree_cache
+	var hx := 9.6
+	var hz := 9.6
+	var road_z := Village.ROAD_Z
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 2026
-	var placed := 0
 	var tries := 0
-	while placed < 140 and tries < 4000:
+	while _tree_cache.size() < 140 and tries < 4000:
 		tries += 1
 		var p := Vector3(rng.randf_range(-70, 70), 0, rng.randf_range(-70, 60))
 		# Ei pihalle, talon tai saunan päälle eikä tielle.
@@ -383,8 +429,62 @@ static func _forest(world: Node3D, hx: float, hz: float, road_z: float) -> void:
 			continue
 		if absf(p.z - road_z) < ROAD_HALF_WIDTH + 1.5:
 			continue
-		_spruce(world, p, rng.randf_range(5.0, 13.0), rng.randf() * TAU)
-		placed += 1
+		var on_plot := false
+		for n in Village.NEIGHBOURS:
+			on_plot = on_plot or (absf(p.x - n["x"]) < 8.0 and p.z > Village.ROAD_FAR and p.z < Village.ROAD_FAR + n["d"] + 9.0)
+		for shop in Village.SHOPS:
+			on_plot = on_plot or (absf(p.x - shop["x"]) < 10.0 and p.z > Village.ROAD_FAR and p.z < Village.ROAD_FAR + 18.0)
+		if on_plot:
+			continue
+		_tree_cache.append([p, rng.randf_range(5.0, 13.0), rng.randf() * TAU])
+	return _tree_cache
+
+
+## Naavapuut: matalia kuusia pihan lähellä. Palauttaa [puun sijainti, poimintapaikka, naavan korkeus].
+static func naava_spots() -> Array:
+	var spots := []
+	for tree in tree_spots():
+		var p: Vector3 = tree[0]
+		if tree[1] < 8.5 and p.length() < 40.0 and spots.size() < Village.NAAVA_TREES:
+			var toward_yard := Vector3(-p.x, 0, -p.z).normalized()
+			spots.append([p, p + toward_yard * 1.1, tree[1] * 0.2])
+	return spots
+
+
+## Kuuset ja naavatupsut. Palauttaa naavasolmut samassa järjestyksessä kuin naava_spots().
+static func _forest(world: Node3D) -> Array:
+	for tree in tree_spots():
+		_spruce(world, tree[0], tree[1], tree[2])
+	var tufts := []
+	for spot in naava_spots():
+		tufts.append(_naava(world, spot[0], spot[1], spot[2]))
+	return tufts
+
+
+## Harmaanvihreä naava roikkuu kuusen alimmilta oksilta.
+static func _naava(world: Node3D, tree: Vector3, pick: Vector3, top: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = "Naava"
+	world.add_child(root)
+	var dir := (pick - tree).normalized()
+	var side := Vector3(-dir.z, 0, dir.x)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(absf(tree.x * 100.0 + tree.z))
+	for i in 18:
+		var strand := MeshInstance3D.new()
+		var cyl := CylinderMesh.new()
+		var length := rng.randf_range(0.45, 0.95)
+		cyl.top_radius = 0.09
+		cyl.bottom_radius = 0.012
+		cyl.height = length
+		cyl.radial_segments = 5
+		strand.mesh = cyl
+		strand.material_override = _mat(Color(0.74, 0.8, 0.62), 1.0)
+		var reach := rng.randf_range(0.4, 1.3)
+		strand.position = tree + dir * reach + side * rng.randf_range(-0.6, 0.6) + Vector3(0, top - length * 0.5 + 0.1, 0)
+		strand.rotation.z = rng.randf_range(-0.15, 0.15)
+		root.add_child(strand)
+	return root
 
 
 static func _spruce(world: Node3D, at: Vector3, height: float, yaw: float) -> void:
@@ -428,6 +528,125 @@ static func _spruce(world: Node3D, at: Vector3, height: float, yaw: float) -> vo
 		cap.material_override = snow_material()
 		cap.position.y = y + layer_h * 0.3
 		tree.add_child(cap)
+
+
+# --- Naapurit ja kaupat ------------------------------------------------------------
+
+static func _neighbour(world: Node3D, index: int) -> void:
+	var n: Dictionary = Village.NEIGHBOURS[index]
+	var x: float = n["x"]
+	var far_end: float = Village.ROAD_FAR + n["d"]
+	_gravel(world, Rect2(x - n["w"] * 0.5, Village.ROAD_FAR, n["w"], n["d"]))
+	# Pieni mökki pihatien päässä, ovi tielle päin.
+	var house := Node3D.new()
+	house.name = "Naapuri%d" % index
+	house.position = Vector3(x + n["w"] * 0.5 + 0.5, 0, far_end + 3.0)
+	house.rotation_degrees.y = 180
+	world.add_child(house)
+	var w := 7.0
+	var d := 5.0
+	var h := 2.8
+	var color: Color = n["color"]
+	_box(house, Vector3(w, h, d), Vector3(0, h * 0.5, 0), color, 0.9, true)
+	_box(house, Vector3(w + 0.2, 0.16, d + 0.2), Vector3(0, h - 0.05, 0), WHITE_TRIM, 0.7)
+	_roof(house, Vector3(w + 0.8, 1.8, d + 1.2), Vector3(0, h + 0.9, 0), Color(0.2, 0.2, 0.22))
+	var roof_snow := MeshInstance3D.new()
+	var prism := PrismMesh.new()
+	prism.size = Vector3(d + 1.4, 2.0, w + 0.9)
+	roof_snow.mesh = prism
+	roof_snow.material_override = snow_material()
+	roof_snow.rotation_degrees.y = 90
+	roof_snow.position = Vector3(0, h + 1.08, 0)
+	house.add_child(roof_snow)
+	for wx in [-2.0, 1.8]:
+		_window(house, Vector3(wx, 1.6, d * 0.5 + 0.03))
+	_box(house, Vector3(0.9, 1.9, 0.08), Vector3(-0.2 - n["w"] * 0.0, 0.95, d * 0.5 + 0.04), Color(0.3, 0.22, 0.15), 0.7)
+	var lamp := OmniLight3D.new()
+	lamp.light_color = Color(1.0, 0.75, 0.45)
+	lamp.light_energy = 1.0
+	lamp.omni_range = 5.0
+	lamp.position = Vector3(-0.2, 2.4, d * 0.5 + 0.5)
+	house.add_child(lamp)
+	# Postilaatikko ja nimikyltti tien varressa
+	var box_at := Vector3(x + n["w"] * 0.5 + 0.6, 0, Village.ROAD_FAR + 0.5)
+	_mailbox(world, box_at)
+	var sign := Label3D.new()
+	sign.text = "%s\n%d € kolauksesta" % [n["name"], n["pay"]]
+	sign.font_size = 36
+	sign.pixel_size = 0.006
+	sign.outline_size = 8
+	sign.modulate = Color(1.0, 0.95, 0.75)
+	sign.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	sign.position = box_at + Vector3(0, 2.0, 0)
+	world.add_child(sign)
+
+
+static func _shop(world: Node3D, index: int) -> void:
+	var info: Dictionary = Village.SHOPS[index]
+	var x: float = info["x"]
+	var counter := Village.counter_position(index)
+	_gravel(world, Rect2(x - 6.0, Village.ROAD_FAR, 12.0, Village.SHOP_SETBACK + 1.0))
+	var shop := Node3D.new()
+	shop.name = info["name"]
+	shop.position = Vector3(x, 0, counter.z + 1.2 + 4.0)
+	world.add_child(shop)
+	var w := 12.0
+	var d := 8.0
+	var h := 4.2
+	var color: Color = info["color"]
+	_box(shop, Vector3(w, h, d), Vector3(0, h * 0.5, 0), Color(0.42, 0.4, 0.37), 0.9, true)
+	_box(shop, Vector3(w + 0.3, 0.5, d + 0.3), Vector3(0, h + 0.05, 0), color, 0.6)
+	_box(shop, Vector3(w + 0.4, 0.3, d + 0.4), Vector3(0, h + 0.45, 0), Color(0.92, 0.94, 1.0), 0.8)
+	# Näyteikkunat ja lasiovi tien puolella
+	for wx in [-3.8, 3.8]:
+		var glass := _box(shop, Vector3(3.4, 2.2, 0.08), Vector3(wx, 1.6, -d * 0.5 - 0.03), Color(1.0, 0.85, 0.55), 0.2)
+		var mat: StandardMaterial3D = glass.material_override.duplicate()
+		mat.emission_enabled = true
+		mat.emission = Color(1.0, 0.8, 0.5)
+		mat.emission_energy_multiplier = 1.2
+		glass.material_override = mat
+	_box(shop, Vector3(1.8, 2.4, 0.1), Vector3(0, 1.2, -d * 0.5 - 0.04), Color(0.55, 0.7, 0.8, 0.7), 0.1)
+	# Kyltti katon reunassa
+	var sign_box := _box(shop, Vector3(7.0, 1.1, 0.2), Vector3(0, h - 0.7, -d * 0.5 - 0.15), color, 0.5)
+	var mat2: StandardMaterial3D = sign_box.material_override.duplicate()
+	mat2.emission_enabled = true
+	mat2.emission = color
+	mat2.emission_energy_multiplier = 0.8
+	sign_box.material_override = mat2
+	var sign := Label3D.new()
+	sign.text = String(info["name"]).to_upper()
+	sign.font_size = 96
+	sign.pixel_size = 0.008
+	sign.outline_size = 12
+	sign.modulate = Color.WHITE
+	sign.position = Vector3(0, h - 0.7, -d * 0.5 - 0.27)
+	sign.rotation_degrees.y = 180
+	shop.add_child(sign)
+	var light := OmniLight3D.new()
+	light.light_color = Color(1.0, 0.85, 0.6)
+	light.light_energy = 1.0
+	light.omni_range = 8.0
+	light.position = Vector3(0, 3.2, -d * 0.5 - 2.0)
+	shop.add_child(light)
+	# Tiskin merkki: pieni matto oven edessä
+	_box(world, Vector3(2.0, 0.03, 1.2), counter + Vector3(0, 0.015, 0.4), Color(0.45, 0.12, 0.08), 0.9)
+	# Tavaraa näytillä oven vieressä
+	if index == Village.RAUTAKAUPPA:
+		var masi := Tools.make_masi()
+		masi.position = Vector3(x + 2.6, 0, counter.z + 0.6)
+		masi.rotation_degrees.y = 160
+		world.add_child(masi)
+		for i in 3:
+			_box(world, Vector3(0.5, 0.25, 0.35), Vector3(x - 2.6, 0.13 + i * 0.26, counter.z + 0.7), Color(0.9, 0.9, 0.85) if i % 2 == 0 else Color(0.2, 0.45, 0.8), 0.9)
+	else:
+		var sled := make_snowmobile(false)
+		sled.position = Vector3(x + 3.2, 0.05, counter.z + 0.4)
+		sled.rotation_degrees.y = -70
+		world.add_child(sled)
+		var blower := Tools.make_blower()
+		blower.position = Vector3(x - 2.8, 0, counter.z + 1.3)
+		blower.rotation_degrees.y = 200
+		world.add_child(blower)
 
 
 # --- Satunnaistapahtumien hahmot ---------------------------------------------------
@@ -498,12 +717,24 @@ static func make_moose() -> Node3D:
 		antler.rotation_degrees.z = side * 20
 		for i in 3:
 			_box(antler, Vector3(0.05, 0.25, 0.05), Vector3(side * 0.3 - side * i * 0.18, 0.12, 0.15), Color(0.82, 0.76, 0.62), 0.8)
-	_capsule(moose, 0.07, 0.3, Vector3(0, 2.0, -1.75), brown.darkened(0.3))
+	# Parta roikkuu kuonon alla kiinni päässä.
+	_capsule(moose, 0.07, 0.3, Vector3(0, 2.2, -1.72), brown.darkened(0.3))
+	# Hirven läpi ei kävellä: törmäyslaatikot rungolle ja kaulalle päineen.
+	var body_shape := StaticBody3D.new()
+	body_shape.name = "Collision"
+	for part in [[Vector3(1.1, 2.3, 2.6), Vector3(0, 1.15, 0)], [Vector3(0.6, 0.9, 1.0), Vector3(0, 2.3, -1.45)]]:
+		var shape := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = part[0]
+		shape.shape = box
+		shape.position = part[1]
+		body_shape.add_child(shape)
+	moose.add_child(body_shape)
 	return moose
 
 
 ## Naapurin Pertti moottorikelkalla. Keula -Z-suuntaan.
-static func make_snowmobile() -> Node3D:
+static func make_snowmobile(with_pertti := true) -> Node3D:
 	var sled := Node3D.new()
 	sled.name = "Moottorikelkka"
 	var yellow := Color(0.95, 0.8, 0.05)
@@ -515,6 +746,19 @@ static func make_snowmobile() -> Node3D:
 	for side in [-0.45, 0.45]:
 		_box(sled, Vector3(0.12, 0.05, 1.2), Vector3(side, 0.05, -1.3), Color(0.15, 0.15, 0.15), 0.5)
 	_box(sled, Vector3(0.7, 0.35, 1.6), Vector3(0, 0.18, 0.4), Color(0.12, 0.12, 0.12), 0.9)
+	# Pakokaasu ja lumipöly
+	var exhaust := _puff(80, 1.0, 0.12, Color(0.92, 0.94, 1.0, 0.7))
+	exhaust.direction = Vector3(0, 0.5, 1)
+	exhaust.spread = 30.0
+	exhaust.initial_velocity_min = 2.0
+	exhaust.initial_velocity_max = 4.0
+	exhaust.position = Vector3(0, 0.2, 1.3)
+	sled.add_child(exhaust)
+	# Ohjaustanko
+	_box(sled, Vector3(0.75, 0.04, 0.04), Vector3(0, 1.05, -0.55), Color(0.1, 0.1, 0.1), 0.6)
+	_box(sled, Vector3(0.05, 0.25, 0.05), Vector3(0, 0.93, -0.6), Color(0.1, 0.1, 0.1), 0.6)
+	if not with_pertti:
+		return sled
 	# Pertti: oranssi haalari ja pipo
 	var pertti := Node3D.new()
 	pertti.name = "Pertti"
@@ -530,14 +774,6 @@ static func make_snowmobile() -> Node3D:
 	face.position = Vector3(0, 1.1, 0)
 	pertti.add_child(face)
 	_box(pertti, Vector3(0.3, 0.14, 0.3), Vector3(0, 1.26, 0), Color(0.1, 0.25, 0.6), 0.9)
-	# Pakokaasu ja lumipöly
-	var exhaust := _puff(80, 1.0, 0.12, Color(0.92, 0.94, 1.0, 0.7))
-	exhaust.direction = Vector3(0, 0.5, 1)
-	exhaust.spread = 30.0
-	exhaust.initial_velocity_min = 2.0
-	exhaust.initial_velocity_max = 4.0
-	exhaust.position = Vector3(0, 0.2, 1.3)
-	sled.add_child(exhaust)
 	return sled
 
 

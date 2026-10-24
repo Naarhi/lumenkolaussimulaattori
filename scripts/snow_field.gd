@@ -3,12 +3,8 @@ extends Node3D
 ## Palvelin päättää lumesta ja lähettää muuttuneet 16 x 16 solun palat pelaajille.
 ## Ruudukko alkaa solmun sijainnista ja jatkuu +X- ja +Z-suuntiin.
 
-const CELLS_X := 192
-const CELLS_Z := 192
 const CELL_SIZE := 0.1
 const CHUNK := 16
-const CHUNKS_X := CELLS_X / CHUNK
-const CHUNKS_Z := CELLS_Z / CHUNK
 const MAX_DEPTH_CM := 250
 const INITIAL_DEPTH_CM := 30
 const SNOWFALL_CM_PER_MINUTE := 0.3
@@ -21,6 +17,12 @@ const MAX_MESH_REBUILDS_PER_FRAME := 24
 const SALT_MELT_CM := 1
 const SALT_MELT_INTERVAL := 0.4
 
+## Ruudukon koko soluina (16:n monikerta). Aseta ennen kuin solmu lisätään puuhun.
+var cells_x := 192
+var cells_z := 192
+var chunks_x := 12
+var chunks_z := 12
+var initial_depth := INITIAL_DEPTH_CM
 var heights := PackedByteArray()
 var material: StandardMaterial3D
 
@@ -36,14 +38,24 @@ var _melt_acc := 0.0
 var _render := true
 
 
+## Pihan koko metreinä (pyöristetään palan monikertaan).
+@warning_ignore("integer_division")
+func setup(width: float, depth: float, start_depth := INITIAL_DEPTH_CM) -> void:
+	cells_x = maxi(1, roundi(width / CELL_SIZE / CHUNK)) * CHUNK
+	cells_z = maxi(1, roundi(depth / CELL_SIZE / CHUNK)) * CHUNK
+	chunks_x = cells_x / CHUNK
+	chunks_z = cells_z / CHUNK
+	initial_depth = start_depth
+
+
 func _ready() -> void:
-	heights.resize(CELLS_X * CELLS_Z)
+	heights.resize(cells_x * cells_z)
 	heights.fill(0)
 	_render = DisplayServer.get_name() != "headless"
 	if not _render:
 		return
 	material = make_snow_material()
-	for i in CHUNKS_X * CHUNKS_Z:
+	for i in chunks_x * chunks_z:
 		var mi := MeshInstance3D.new()
 		mi.material_override = material
 		add_child(mi)
@@ -77,7 +89,7 @@ static func make_snow_material() -> StandardMaterial3D:
 ## Palvelin: täytä piha lähtölumella.
 func start_server() -> void:
 	_is_server = true
-	heights.fill(INITIAL_DEPTH_CM)
+	heights.fill(initial_depth)
 	_queue_all_meshes()
 
 
@@ -153,13 +165,13 @@ func add_snow(world_pos: Vector3, radius: float, amount: int) -> void:
 func salt_area(world_pos: Vector3, radius: float, duration: float) -> int:
 	var count := 0
 	for cell in _cells_in_radius(world_pos, radius):
-		_salted[cell.y * CELLS_X + cell.x] = _clock + duration
+		_salted[cell.y * cells_x + cell.x] = _clock + duration
 		count += 1
 	return count
 
 
 func is_salted(x: int, z: int) -> bool:
-	return _salted.get(z * CELLS_X + x, -1.0) > _clock
+	return _salted.get(z * cells_x + x, -1.0) > _clock
 
 
 ## Palvelin: suola sulattaa lunta. Kutsutaan joka fysiikkaruudulla.
@@ -173,17 +185,17 @@ func melt_salted(delta: float) -> void:
 		if _salted[index] <= _clock:
 			_salted.erase(index)
 			continue
-		var x: int = index % CELLS_X
+		var x: int = index % cells_x
 		@warning_ignore("integer_division")
-		var z: int = index / CELLS_X
+		var z: int = index / cells_x
 		if heights[index] > 0:
 			_change(x, z, -SALT_MELT_CM)
 
 
 ## Sataa lunta koko pihalle, mutta vain soluihin, joissa lunta on alle max_depth_cm.
 func add_snow_everywhere(depth_cm: int, max_depth_cm: int) -> void:
-	for z in CELLS_Z:
-		for x in CELLS_X:
+	for z in cells_z:
+		for x in cells_x:
 			var room := max_depth_cm - _cell(x, z)
 			if room > 0 and not is_salted(x, z):
 				_change(x, z, mini(depth_cm, room))
@@ -193,8 +205,8 @@ func add_snow_everywhere(depth_cm: int, max_depth_cm: int) -> void:
 func add_snow_line(start: Vector3, end: Vector3, width: float, depth_cm: int) -> void:
 	var a := Vector2(to_local(start).x, to_local(start).z)
 	var b := Vector2(to_local(end).x, to_local(end).z)
-	for z in CELLS_Z:
-		for x in CELLS_X:
+	for z in cells_z:
+		for x in cells_x:
 			var p := Vector2((x + 0.5) * CELL_SIZE, (z + 0.5) * CELL_SIZE)
 			if p.distance_to(Geometry2D.get_closest_point_to_segment(p, a, b)) <= width * 0.5:
 				_change(x, z, depth_cm)
@@ -212,11 +224,31 @@ func cell_center(x: int, z: int) -> Vector3:
 
 
 func random_point() -> Vector3:
-	return to_global(Vector3(randf() * CELLS_X * CELL_SIZE, 0.0, randf() * CELLS_Z * CELL_SIZE))
+	return to_global(Vector3(randf() * cells_x * CELL_SIZE, 0.0, randf() * cells_z * CELL_SIZE))
+
+
+## Onko piste tämän pihan alueella (vaakatasossa).
+func contains(world_pos: Vector3) -> bool:
+	var local := to_local(world_pos)
+	return local.x >= 0.0 and local.z >= 0.0 and local.x < cells_x * CELL_SIZE and local.z < cells_z * CELL_SIZE
+
+
+## Kuinka suuri osa soluista on enintään max_cm syvyisiä (0..1).
+func fraction_cleared(max_cm: int) -> float:
+	var clear := 0
+	for h in heights:
+		if h <= max_cm:
+			clear += 1
+	return float(clear) / maxf(heights.size(), 1)
+
+
+## Täyttää koko pihan vähintään depth_cm syvyiseksi (uusi tilaus naapurilta).
+func refill(depth_cm: int) -> void:
+	add_snow_everywhere(depth_cm, depth_cm)
 
 
 func size() -> Vector2:
-	return Vector2(CELLS_X * CELL_SIZE, CELLS_Z * CELL_SIZE)
+	return Vector2(cells_x * CELL_SIZE, cells_z * CELL_SIZE)
 
 
 func total_snow() -> int:
@@ -229,21 +261,21 @@ func total_snow() -> int:
 # --- Sisäiset --------------------------------------------------------------
 
 func _cell(x: int, z: int) -> int:
-	if x < 0 or z < 0 or x >= CELLS_X or z >= CELLS_Z:
+	if x < 0 or z < 0 or x >= cells_x or z >= cells_z:
 		return 0
-	return heights[z * CELLS_X + x]
+	return heights[z * cells_x + x]
 
 
 @warning_ignore("integer_division")
 func _change(x: int, z: int, delta: int) -> int:
-	if x < 0 or z < 0 or x >= CELLS_X or z >= CELLS_Z or delta == 0:
+	if x < 0 or z < 0 or x >= cells_x or z >= cells_z or delta == 0:
 		return 0
-	var i := z * CELLS_X + x
+	var i := z * cells_x + x
 	var old := heights[i]
 	var value := clampi(old + delta, 0, MAX_DEPTH_CM)
 	if value != old:
 		heights[i] = value
-		_dirty[(z / CHUNK) * CHUNKS_X + x / CHUNK] = true
+		_dirty[(z / CHUNK) * chunks_x + x / CHUNK] = true
 	return value - old
 
 
@@ -251,9 +283,9 @@ func _cells_in_radius(world_pos: Vector3, radius: float) -> Array[Vector2i]:
 	var local := to_local(world_pos)
 	var result: Array[Vector2i] = []
 	var min_x := maxi(0, floori((local.x - radius) / CELL_SIZE))
-	var max_x := mini(CELLS_X - 1, floori((local.x + radius) / CELL_SIZE))
+	var max_x := mini(cells_x - 1, floori((local.x + radius) / CELL_SIZE))
 	var min_z := maxi(0, floori((local.z - radius) / CELL_SIZE))
-	var max_z := mini(CELLS_Z - 1, floori((local.z + radius) / CELL_SIZE))
+	var max_z := mini(cells_z - 1, floori((local.z + radius) / CELL_SIZE))
 	for z in range(min_z, max_z + 1):
 		for x in range(min_x, max_x + 1):
 			var center := Vector2((x + 0.5) * CELL_SIZE, (z + 0.5) * CELL_SIZE)
@@ -275,11 +307,11 @@ func _flush_dirty() -> void:
 
 @warning_ignore("integer_division")
 func _read_chunk(index: int) -> PackedByteArray:
-	var cx := index % CHUNKS_X
-	var cz := index / CHUNKS_X
+	var cx := index % chunks_x
+	var cz := index / chunks_x
 	var data := PackedByteArray()
 	for row in CHUNK:
-		var start := (cz * CHUNK + row) * CELLS_X + cx * CHUNK
+		var start := (cz * CHUNK + row) * cells_x + cx * CHUNK
 		data.append_array(heights.slice(start, start + CHUNK))
 	return data
 
@@ -288,10 +320,10 @@ func _read_chunk(index: int) -> PackedByteArray:
 func _write_chunk(index: int, data: PackedByteArray) -> void:
 	if data.size() != CHUNK * CHUNK:
 		return
-	var cx := index % CHUNKS_X
-	var cz := index / CHUNKS_X
+	var cx := index % chunks_x
+	var cz := index / chunks_x
 	for row in CHUNK:
-		var start := (cz * CHUNK + row) * CELLS_X + cx * CHUNK
+		var start := (cz * CHUNK + row) * cells_x + cx * CHUNK
 		for col in CHUNK:
 			heights[start + col] = data[row * CHUNK + col]
 
@@ -301,27 +333,27 @@ func _write_chunk(index: int, data: PackedByteArray) -> void:
 func _queue_mesh(index: int) -> void:
 	if not _render:
 		return
-	var cx := index % CHUNKS_X
-	var cz := index / CHUNKS_X
+	var cx := index % chunks_x
+	var cz := index / chunks_x
 	for dz in range(-1, 2):
 		for dx in range(-1, 2):
 			var nx := cx + dx
 			var nz := cz + dz
-			if nx >= 0 and nz >= 0 and nx < CHUNKS_X and nz < CHUNKS_Z:
-				_mesh_queue[nz * CHUNKS_X + nx] = true
+			if nx >= 0 and nz >= 0 and nx < chunks_x and nz < chunks_z:
+				_mesh_queue[nz * chunks_x + nx] = true
 
 
 func _queue_all_meshes() -> void:
 	if not _render:
 		return
-	for i in CHUNKS_X * CHUNKS_Z:
+	for i in chunks_x * chunks_z:
 		_mesh_queue[i] = true
 
 
 @warning_ignore("integer_division")
 func _build_mesh(index: int) -> void:
-	var cx := index % CHUNKS_X
-	var cz := index / CHUNKS_X
+	var cx := index % chunks_x
+	var cz := index / chunks_x
 	var n := CHUNK + 1
 
 	# Verteksien korkeudet yhden ylimääräisen reunan kanssa normaaleja varten.

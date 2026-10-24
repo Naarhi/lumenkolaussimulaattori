@@ -4,11 +4,12 @@ extends Node
 enum { AURA_AUTO, LUMIMYRSKY, HIRVI, PERTTI, KATTOLUMI, JALLU }
 
 const Pihapiiri := preload("res://scripts/pihapiiri.gd")
+const Village := preload("res://scripts/village.gd")
 
 const EVENTS := [
 	{"type": AURA_AUTO, "weight": 3.0, "text": "Kunnan aura-auto jyrisi ohi ja puski penkan pihatielle!"},
 	{"type": LUMIMYRSKY, "weight": 2.0, "text": "Lumimyräkkä yllätti! Pihalle sataa lunta silmissä."},
-	{"type": HIRVI, "weight": 1.0, "text": "Hirvi käveli pihalle eikä aio lähteä mihinkään."},
+	{"type": HIRVI, "weight": 1.0, "text": "Hirvi käveli pihalle eikä lähde ilman naavaa! Naavaa kasvaa kuusten alla. Älä mene lähelle tyhjin käsin."},
 	{"type": PERTTI, "weight": 2.0, "text": "Naapurin Pertti tuli moottorikelkalla \"auttamaan\". Pihalla on nyt lumikasoja."},
 	{"type": KATTOLUMI, "weight": 2.0, "text": "Katolta romahti lumikuorma kolaajan niskaan!"},
 	{"type": JALLU, "weight": 2.0, "text": "Pertti kurvasi pihaan ja jätti Jallu-colaa! Mene pullon luo ja paina E."},
@@ -19,15 +20,35 @@ const DRINK_DISTANCE := 1.6
 const BOOST_SECONDS := 20.0
 const MIN_INTERVAL := 90.0
 const MAX_INTERVAL := 240.0
+## Hirvi potkaisee naavattoman kolaajan, joka tulee tätä lähemmäs, ja syö naavan tätä läheltä.
+const MOOSE_KICK_DISTANCE := 2.6
+const MOOSE_FEED_DISTANCE := 3.2
+const MOOSE_KICK_DAMAGE := 25
+const MOOSE_KICK_COOLDOWN_MS := 1500
+const MOOSE_MAX_STAY := 600.0
+const MOOSE_FEED_XP := 40
 
 var _timer: Timer
 # Pullot {id: sijainti}. Palvelin päättää, asiakkaat näyttävät.
 var bottles := {}
 var _bottle_nodes := {}
 var _next_bottle := 1
+## Hirvi: onko pihalla ja missä. Palvelin päättää, asiakkaat näyttävät.
+var moose_active := false
+var moose_pos := Vector3.ZERO
+var _moose_node: Node3D
+var _moose_left_at := 0.0
+var _last_kick := {}
+var _kick_check := 0.0
+## Naavapuut [puu, poimintapaikka, korkeus], onko naavaa poimittavissa ja ketkä kantavat naavaa.
+var naava_spots: Array = Pihapiiri.naava_spots()
+var naava_ready := {}
+var carrying_naava := {}
 
 
 func start_server() -> void:
+	for i in naava_spots.size():
+		naava_ready[i] = true
 	if _timer:
 		_schedule()
 		return
@@ -65,12 +86,19 @@ func trigger(type: int) -> void:
 	var point := Vector3.ZERO
 	match type:
 		AURA_AUTO:
-			var row: int = snow.CELLS_Z - 4
-			snow.add_snow_line(snow.cell_center(0, row), snow.cell_center(snow.CELLS_X - 1, row), 0.9, 45)
+			var row: int = snow.cells_z - 4
+			snow.add_snow_line(snow.cell_center(0, row), snow.cell_center(snow.cells_x - 1, row), 0.9, 45)
+			# Naapurien pihateiden suut tukkeutuvat myös.
+			for field in main.neighbours.fields:
+				field.add_snow_line(field.cell_center(0, 4), field.cell_center(field.cells_x - 1, 4), 0.9, 35)
 		LUMIMYRSKY:
 			snow.add_snow_everywhere(8, snow.STORM_MAX_DEPTH_CM)
 		HIRVI:
+			if moose_active:
+				return
 			point = snow.random_point()
+			_cl_moose.rpc(true, point, randf() * TAU)
+			_moose_left_at = Time.get_ticks_msec() / 1000.0 + MOOSE_MAX_STAY
 		PERTTI:
 			for i in 4:
 				snow.add_snow(snow.random_point(), 0.8, 2500)
@@ -79,7 +107,7 @@ func trigger(type: int) -> void:
 			if victims.is_empty():
 				return
 			point = victims[randi() % victims.size()].global_position
-			snow.add_snow(point, 0.7, 3000)
+			main._add(point, 0.7, 3000)
 		JALLU:
 			for i in BOTTLES_PER_DELIVERY:
 				var id := _next_bottle
@@ -109,12 +137,6 @@ func _cl_visual(type: int, point: Vector3, field_depth: float) -> void:
 			var tween := create_tween()
 			tween.tween_property(truck, "position:x", 45.0, 7.0)
 			tween.tween_callback(truck.queue_free)
-		HIRVI:
-			var moose := Pihapiiri.make_moose()
-			world.add_child(moose)
-			moose.position = point
-			moose.rotation.y = randf() * TAU
-			get_tree().create_timer(60.0).timeout.connect(moose.queue_free)
 		PERTTI, JALLU:
 			var sled := Pihapiiri.make_snowmobile()
 			world.add_child(sled)
@@ -129,6 +151,160 @@ func _cl_visual(type: int, point: Vector3, field_depth: float) -> void:
 				var particles: GPUParticles3D = main.scenery["snowfall"]
 				particles.amount_ratio = 1.0
 				get_tree().create_timer(30.0).timeout.connect(func(): particles.amount_ratio = 0.35)
+
+
+# --- Hirvi ja naava -----------------------------------------------------------------
+
+## Palvelin: pullot, hirvi ja naavat juuri liittyneelle.
+func send_state(peer: int) -> void:
+	send_bottles(peer)
+	if moose_active:
+		_cl_moose.rpc_id(peer, true, moose_pos, 0.0)
+	for i in naava_ready:
+		if not naava_ready[i]:
+			_cl_naava.rpc_id(peer, i, false)
+	for p in carrying_naava:
+		_cl_carry_naava.rpc_id(peer, p, true)
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_moose(active: bool, pos: Vector3, yaw: float) -> void:
+	moose_active = active
+	if active:
+		moose_pos = pos
+	if DisplayServer.get_name() == "headless":
+		return
+	if active and _moose_node == null:
+		_moose_node = Pihapiiri.make_moose()
+		get_parent().add_child(_moose_node)
+		_moose_node.position = pos
+		_moose_node.rotation.y = yaw
+	elif not active and _moose_node:
+		# Hirvi lönkyttelee metsään ja katoaa.
+		var leaving := _moose_node
+		_moose_node = null
+		var away := Vector3(leaving.position.x, 0, leaving.position.z).normalized()
+		if away == Vector3.ZERO:
+			away = Vector3.FORWARD
+		leaving.rotation.y = atan2(away.x, away.z) + PI
+		leaving.get_node("Collision").queue_free()
+		var tween := create_tween()
+		tween.tween_property(leaving, "position", leaving.position + away * 40.0, 12.0)
+		tween.tween_callback(leaving.queue_free)
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_moose_kick(target: Vector3) -> void:
+	if _moose_node == null:
+		return
+	# Hirvi kääntyy kohti ja nousee takajaloilleen.
+	var dir := target - _moose_node.position
+	_moose_node.rotation.y = atan2(dir.x, dir.z) + PI
+	var tween := create_tween()
+	tween.tween_property(_moose_node, "rotation:x", -0.35, 0.12)
+	tween.tween_property(_moose_node, "rotation:x", 0.0, 0.3)
+
+
+## Lähin poimittava naava, johon ylettyy, tai -1.
+func naava_near(pos: Vector3) -> int:
+	for i in naava_spots.size():
+		var spot: Vector3 = naava_spots[i][1]
+		if naava_ready.get(i, true) and Vector2(pos.x - spot.x, pos.z - spot.z).length() < Village.NAAVA_RANGE:
+			return i
+	return -1
+
+
+func moose_near(pos: Vector3, distance: float) -> bool:
+	return moose_active and Vector2(pos.x - moose_pos.x, pos.z - moose_pos.z).length() < distance
+
+
+@rpc("any_peer", "call_local", "reliable")
+func srv_pick_naava(index: int) -> void:
+	if not multiplayer.is_server() or index < 0 or index >= naava_spots.size():
+		return
+	var sender := _sender()
+	var player = get_parent().players.get_node_or_null(str(sender))
+	var spot: Vector3 = naava_spots[index][1]
+	if player == null or not naava_ready[index] or carrying_naava.has(sender) or Vector2(player.global_position.x - spot.x, player.global_position.z - spot.z).length() > Village.NAAVA_RANGE + 0.5:
+		return
+	naava_ready[index] = false
+	_cl_naava.rpc(index, false)
+	_cl_carry_naava.rpc(sender, true)
+	get_tree().create_timer(Village.NAAVA_REGROW).timeout.connect(func():
+		naava_ready[index] = true
+		_cl_naava.rpc(index, true))
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_naava(index: int, available: bool) -> void:
+	naava_ready[index] = available
+	var main = get_parent()
+	if main.scenery.has("naava") and index < main.scenery["naava"].size():
+		main.scenery["naava"][index].visible = available
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_carry_naava(peer: int, carrying: bool) -> void:
+	if carrying:
+		carrying_naava[peer] = true
+	else:
+		carrying_naava.erase(peer)
+	if peer == multiplayer.get_unique_id() and DisplayServer.get_name() != "headless":
+		get_parent().hud.set_naava(carrying)
+		if carrying:
+			Sfx.play_2d(Sfx.SCOOP)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func srv_feed_moose() -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := _sender()
+	var main = get_parent()
+	var player = main.players.get_node_or_null(str(sender))
+	if player == null or not carrying_naava.has(sender) or not moose_near(player.global_position, MOOSE_FEED_DISTANCE + 0.5):
+		return
+	_cl_carry_naava.rpc(sender, false)
+	_cl_moose.rpc(false, moose_pos, 0.0)
+	main._add_xp(sender, MOOSE_FEED_XP)
+	main.announce("%s syötti hirvelle naavaa. Hirvi lönkytteli tyytyväisenä metsään." % main.display_name_for(sender)[0])
+
+
+## Palvelin: naava putoaa, kun kantaja pyörtyy tai poistuu.
+func drop_naava(peer: int) -> void:
+	if carrying_naava.has(peer):
+		_cl_carry_naava.rpc(peer, false)
+
+
+func _physics_process(delta: float) -> void:
+	if not moose_active or not multiplayer.has_multiplayer_peer() or not multiplayer.is_server():
+		return
+	if Time.get_ticks_msec() / 1000.0 > _moose_left_at:
+		_cl_moose.rpc(false, moose_pos, 0.0)
+		get_parent().announce("Hirvi kyllästyi odottamaan naavaa ja lähti itse.")
+		return
+	_kick_check -= delta
+	if _kick_check > 0.0:
+		return
+	_kick_check = 0.25
+	var main = get_parent()
+	var now := Time.get_ticks_msec()
+	for player in main.players.get_children():
+		var peer := int(String(player.name))
+		if carrying_naava.has(peer) or not moose_near(player.global_position, MOOSE_KICK_DISTANCE):
+			continue
+		if now - int(_last_kick.get(peer, -100000)) < MOOSE_KICK_COOLDOWN_MS:
+			continue
+		_last_kick[peer] = now
+		var push: Vector3 = player.global_position - moose_pos
+		push.y = 0.0
+		_cl_moose_kick.rpc(player.global_position)
+		main.hurt(peer, MOOSE_KICK_DAMAGE, push.normalized() if push.length() > 0.01 else Vector3.BACK)
+
+
+func _sender() -> int:
+	var sender := multiplayer.get_remote_sender_id()
+	return sender if sender != 0 else multiplayer.get_unique_id()
 
 
 # --- Jallu-cola ---------------------------------------------------------------------

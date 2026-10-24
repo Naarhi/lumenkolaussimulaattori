@@ -3,6 +3,7 @@ extends CanvasLayer
 
 const Skills := preload("res://scripts/skills.gd")
 const Tools := preload("res://scripts/tools.gd")
+const Village := preload("res://scripts/village.gd")
 
 const OSRS_BROWN := Color(0.24, 0.2, 0.15, 0.92)
 const OSRS_BORDER := Color(0.1, 0.08, 0.05)
@@ -31,11 +32,26 @@ var _popup: Label
 var _tool_labels: Array[Label] = []
 var _hint: Label
 var _boost_label: Label
+var _money_label: Label
+var _health_label: Label
+var _naava_label: Label
+var _flash: ColorRect
+## Oma kunto (palvelin lähettää).
+var health := 100
+## Kauppaikkuna: auki oleva kauppa tai -1.
+var shop := -1
+var _shop: Control
+var _shop_title: Label
+var _shop_rows: VBoxContainer
+var _shop_money: Label
+var _tool_owned: Array = [true, false, false, false, false]
+var _selected_tool := 0
 
 
 func _ready() -> void:
 	_build_game_ui()
 	_build_pause_menu()
+	_build_shop()
 	_build_menu()
 	_game.visible = false
 	_menu.visible = false
@@ -45,12 +61,13 @@ func _ready() -> void:
 
 ## Tosi, kun pelaajan ohjaus on pois päältä (chat tai valikko).
 func blocks_input() -> bool:
-	return typing or paused
+	return typing or paused or shop >= 0
 
 
 func show_menu(main, message := "") -> void:
 	_menu.set_meta("main", main)
 	_close_pause(false)
+	close_shop(false)
 	_menu.visible = true
 	_game.visible = false
 	_status.visible = false
@@ -120,7 +137,7 @@ func _build_menu() -> void:
 	box.add_child(_button("Yksinpeli", func(): _main().start_singleplayer()))
 	box.add_child(_button("Lopeta", func(): get_tree().quit()))
 
-	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo · Esc valikko", 13, Color(0.8, 0.78, 0.7))
+	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo / kauppa · F kelkka · Esc valikko\nNaapurit maksavat pihateidensä kolaamisesta. Rahalla saa parempia vehkeitä.", 13, Color(0.8, 0.78, 0.7))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(help)
 
@@ -204,6 +221,19 @@ func _build_game_ui() -> void:
 	skill_box.add_child(_carry_label)
 	_boost_label = _label("", 15, Color(1.0, 0.75, 0.3))
 	skill_box.add_child(_boost_label)
+	_money_label = _label("Rahaa: 0 €", 17, Color(0.55, 1.0, 0.45))
+	skill_box.add_child(_money_label)
+	_health_label = _label("", 16, Color(1.0, 0.45, 0.4))
+	_health_label.visible = false
+	skill_box.add_child(_health_label)
+	_naava_label = _label("Naavaa mukana: vie hirvelle", 15, Color(0.7, 0.85, 0.6))
+	_naava_label.visible = false
+	skill_box.add_child(_naava_label)
+	_flash = ColorRect.new()
+	_flash.color = Color(0.8, 0.0, 0.0, 0.0)
+	_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_game.add_child(_flash)
 	set_xp(0)
 	set_carrying(0)
 	set_boost(0.0)
@@ -232,7 +262,7 @@ func _build_game_ui() -> void:
 		var l := _label("%d %s" % [i + 1, Tools.NAMES[i]], 15, Color.WHITE)
 		bar.add_child(l)
 		_tool_labels.append(l)
-	set_tool(0)
+	set_inventory(0, [], 0.0)
 
 	_popup = _label("", 36, OSRS_YELLOW)
 	_popup.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -259,8 +289,48 @@ func set_xp(value: int) -> void:
 
 
 func set_tool(index: int) -> void:
+	_selected_tool = index
 	for i in _tool_labels.size():
-		_tool_labels[i].add_theme_color_override("font_color", OSRS_YELLOW if i == index else Color(0.75, 0.72, 0.65))
+		var color := OSRS_YELLOW if i == index else Color(0.75, 0.72, 0.65)
+		if not _tool_owned[i]:
+			color = Color(0.45, 0.42, 0.38)
+		_tool_labels[i].add_theme_color_override("font_color", color)
+
+
+## Rahat ja ostetut tavarat palvelimelta. Ostamattomat työkalut näkyvät harmaina hintoineen.
+func set_inventory(money: int, owned: Array, salt: float) -> void:
+	_money_label.text = "Rahaa: %s €" % _thousands(money)
+	for i in Tools.COUNT:
+		var item := Village.item_for_tool(i)
+		if i == Tools.SUOLA:
+			_tool_owned[i] = salt > 0.0
+			_tool_labels[i].text = "%d Suola %.1f kg" % [i + 1, salt] if salt > 0.0 else "%d Suola (8 €)" % (i + 1)
+		else:
+			_tool_owned[i] = item == "" or item in owned
+			var price := "" if _tool_owned[i] else " (%d €)" % Village.ITEMS[item]["price"]
+			_tool_labels[i].text = "%d %s%s" % [i + 1, Tools.NAMES[i], price]
+	set_tool(_selected_tool)
+	if shop >= 0:
+		_fill_shop()
+
+
+func set_health(value: int, hit: bool) -> void:
+	health = value
+	_health_label.text = "Kunto %d / 100" % value
+	_health_label.visible = value < 100
+	if hit:
+		_flash.color.a = 0.45
+		create_tween().tween_property(_flash, "color:a", 0.0, 0.6)
+
+
+func set_naava(carrying: bool) -> void:
+	_naava_label.visible = carrying
+
+
+func tool_locked(tool: int) -> void:
+	var item := "suola" if tool == Tools.SUOLA else Village.item_for_tool(tool)
+	var where: Dictionary = Village.SHOPS[Village.ITEMS[item]["shop"]]
+	chat("%s: osta ensin %s (%s)." % [Tools.NAMES[tool], where["from"], where["where"]], Color(1.0, 0.75, 0.4))
 
 
 func set_hint(text: String) -> void:
@@ -296,11 +366,14 @@ func chat(text: String, color := Color.WHITE) -> void:
 func _input(event: InputEvent) -> void:
 	if not _game.visible or not (event is InputEventKey) or not event.pressed or event.echo:
 		return
-	if not typing and not paused and event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_T]:
+	if not typing and not paused and shop < 0 and event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_T]:
 		typing = true
 		_chat_input.visible = true
 		_chat_input.text = ""
 		_chat_input.grab_focus.call_deferred()
+		get_viewport().set_input_as_handled()
+	elif shop >= 0 and event.physical_keycode in [KEY_ESCAPE, KEY_E]:
+		close_shop(true)
 		get_viewport().set_input_as_handled()
 	elif typing and event.physical_keycode == KEY_ESCAPE:
 		_close_chat()
@@ -372,6 +445,72 @@ func _close_pause(recapture: bool) -> void:
 	_pause.visible = false
 	if recapture and DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+# --- Kauppa ------------------------------------------------------------------------
+
+func _build_shop() -> void:
+	_shop = ColorRect.new()
+	(_shop as ColorRect).color = Color(0, 0, 0, 0.35)
+	_shop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_shop.visible = false
+	add_child(_shop)
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _osrs_box())
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	panel.custom_minimum_size = Vector2(460, 0)
+	_shop.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	panel.add_child(box)
+	_shop_title = _label("", 26, OSRS_YELLOW)
+	_shop_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(_shop_title)
+	_shop_money = _label("", 17, Color(0.55, 1.0, 0.45))
+	_shop_money.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(_shop_money)
+	_shop_rows = VBoxContainer.new()
+	_shop_rows.add_theme_constant_override("separation", 6)
+	box.add_child(_shop_rows)
+	box.add_child(_button("Sulje (Esc)", func(): close_shop(true)))
+
+
+func open_shop(index: int) -> void:
+	shop = index
+	_shop.visible = true
+	_shop_title.text = Village.SHOPS[index]["name"]
+	_fill_shop()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func close_shop(recapture: bool) -> void:
+	shop = -1
+	_shop.visible = false
+	if recapture and DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func _fill_shop() -> void:
+	var main = get_tree().current_scene
+	_shop_money.text = "Rahaa: %s €" % _thousands(main.money)
+	for child in _shop_rows.get_children():
+		child.queue_free()
+	for id in Village.ITEM_ORDER:
+		var info: Dictionary = Village.ITEMS[id]
+		if info["shop"] != shop:
+			continue
+		var row := HBoxContainer.new()
+		var name_label := _label("%s  %d €" % [info["name"], info["price"]], 18, Color(0.95, 0.9, 0.75))
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(name_label)
+		var have: bool = not info.has("salt") and id in main.owned
+		var b := _button("Omistat" if have else "Osta", func(): main.buy(id))
+		b.custom_minimum_size.x = 110
+		b.disabled = have or main.money < info["price"]
+		row.add_child(b)
+		_shop_rows.add_child(row)
 
 
 func _on_chat_submitted(text: String) -> void:

@@ -10,6 +10,14 @@ const BOOST_MULTIPLIER := 1.5
 const JUMP_VELOCITY := 4.2
 const MOUSE_SENSITIVITY := 0.0025
 const Tools := preload("res://scripts/tools.gd")
+const Village := preload("res://scripts/village.gd")
+const Pihapiiri := preload("res://scripts/pihapiiri.gd")
+const SLED_MAX_SPEED := 13.0
+const SLED_REVERSE_SPEED := 3.0
+const SLED_ACCEL := 7.0
+const SLED_BRAKE := 12.0
+const SLED_TURN := 1.9
+const SLED_HEIGHT := 0.25
 const JACKET_COLORS := [
 	Color(0.75, 0.12, 0.1), Color(0.1, 0.3, 0.7), Color(0.95, 0.55, 0.1),
 	Color(0.15, 0.5, 0.25), Color(0.5, 0.2, 0.6), Color(0.85, 0.75, 0.2),
@@ -23,6 +31,10 @@ var tool_active := false
 var force_active := false
 ## Jallu-boostia jäljellä sekunteina (palvelin asettaa kaikille).
 var boost_time := 0.0
+## Ajaako pelaaja omalla moottorikelkallaan (synkronoidaan).
+var riding := false
+## Testiajo painaa kaasua ilman näppäimistöä.
+var force_drive := false
 var head: Node3D
 var camera: Camera3D
 var shovel: Node3D
@@ -35,6 +47,10 @@ var _tool_fx := {}
 var _sound_timer := 0.0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _swing: Tween
+var _sled: Node3D
+var _speed := 0.0
+## Tönäisy (hirven potku), joka hiipuu nopeasti.
+var _knock := Vector3.ZERO
 
 
 func _init() -> void:
@@ -71,6 +87,11 @@ func _init() -> void:
 	_nametag.no_depth_test = false
 	_body.add_child(_nametag)
 
+	_sled = Pihapiiri.make_snowmobile(false)
+	_sled.position.y = SLED_HEIGHT
+	_sled.visible = false
+	add_child(_sled)
+
 	shovel = _make_shovel()
 	head.add_child(shovel)
 	_build_tools()
@@ -79,7 +100,7 @@ func _init() -> void:
 	sync.name = "Sync"
 	sync.root_path = NodePath("..")
 	var config := SceneReplicationConfig.new()
-	for path in [NodePath(".:position"), NodePath(".:rotation"), NodePath("Head:rotation"), NodePath(".:tool"), NodePath(".:tool_active")]:
+	for path in [NodePath(".:position"), NodePath(".:rotation"), NodePath("Head:rotation"), NodePath(".:tool"), NodePath(".:tool_active"), NodePath(".:riding")]:
 		config.add_property(path)
 		config.property_set_spawn(path, true)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -121,13 +142,36 @@ func _build_tools() -> void:
 
 func _show_tool() -> void:
 	for i in _tool_models.size():
-		_tool_models[i].visible = i == tool
+		_tool_models[i].visible = i == tool and not riding
 
 
-func select_tool(index: int) -> void:
-	tool = posmod(index, Tools.COUNT)
+## Valitse työkalu. Ostamatonta ei voi valita; rullalla (step) hypätään seuraavaan omaan.
+func select_tool(index: int, step := 0) -> void:
+	var t := posmod(index, Tools.COUNT)
+	if step != 0:
+		for i in Tools.COUNT:
+			if _main().has_tool(t):
+				break
+			t = posmod(t + step, Tools.COUNT)
+	if not _main().has_tool(t):
+		_main().hud.tool_locked(t)
+		return
+	tool = t
 	_show_tool()
 	_main().hud.set_tool(tool)
+
+
+## Hyppää kelkan selkään tai pois.
+func toggle_riding() -> void:
+	if not riding and not "kelkka" in _main().owned:
+		_main().hud.chat("Moottorikelkan saa koneliikkeestä tien itäpäästä.", Color(1.0, 0.75, 0.4))
+		return
+	riding = not riding
+	_speed = 0.0
+	if not riding:
+		# Katse jää samaan suuntaan, kun noustaan kelkasta.
+		rotation.y += head.rotation.y
+		head.rotation.y = 0.0
 
 
 func _process(delta: float) -> void:
@@ -135,10 +179,12 @@ func _process(delta: float) -> void:
 	if is_multiplayer_authority():
 		var hud = _main().hud
 		hud.set_boost(boost_time)
-		hud.set_hint("E: juo Jallu-colaa" if _main().events.bottle_near(global_position) >= 0 else "")
+		hud.set_hint(_interaction_hint())
 	# Boostissa näkymä keinuu hieman.
 	camera.rotation.z = sin(Time.get_ticks_msec() * 0.003) * 0.03 * minf(boost_time, 1.0)
-	if not _tool_models[tool].visible:
+	_sled.visible = riding
+	_body.position.y = 0.5 if riding else 0.0
+	if _tool_models[tool].visible == riding:
 		_show_tool()
 	for t in _tool_fx:
 		_tool_fx[t].emitting = tool_active and tool == t
@@ -147,11 +193,52 @@ func _process(delta: float) -> void:
 	if tool_active and tool == Tools.LINKO:
 		_tool_models[Tools.LINKO].get_node("Auger").rotate_x(delta * 20.0)
 	_sound_timer -= delta
-	if tool_active and _sound_timer <= 0.0 and DisplayServer.get_name() != "headless":
+	if (tool_active or riding) and _sound_timer <= 0.0 and DisplayServer.get_name() != "headless":
 		_sound_timer = Tools.SOUND_INTERVAL
-		var sound := Tools.sound_for(tool)
+		var sound := Sfx.SLED if riding else Tools.sound_for(tool)
 		if sound >= 0:
 			Sfx.play_at(sound, global_position + Vector3(0, 1, 0), self)
+
+
+## Mitä E-näppäin tekisi juuri nyt: [tunniste, vihje].
+func _interaction() -> Array:
+	var events = _main().events
+	var shop := Village.shop_near(global_position)
+	var mine: bool = events.carrying_naava.has(peer_id)
+	if shop >= 0:
+		return ["kauppa", "E: %s" % Village.SHOPS[shop]["name"]]
+	if mine and events.moose_near(global_position, events.MOOSE_FEED_DISTANCE):
+		return ["hirvi", "E: syötä naavaa hirvelle"]
+	if not mine and events.naava_near(global_position) >= 0:
+		return ["naava", "E: kerää naavaa"]
+	if events.bottle_near(global_position) >= 0:
+		return ["jallu", "E: juo Jallu-colaa"]
+	return ["", ""]
+
+
+func _interaction_hint() -> String:
+	return _interaction()[1]
+
+
+## E-näppäin: kauppa, hirven ruokinta, naavan poiminta tai Jallu-cola. Palauttaa tehdyn toiminnon.
+func interact() -> String:
+	var events = _main().events
+	var what: String = _interaction()[0]
+	match what:
+		"kauppa":
+			_main().hud.open_shop(Village.shop_near(global_position))
+		"hirvi":
+			events.srv_feed_moose.rpc_id(1)
+		"naava":
+			events.srv_pick_naava.rpc_id(1, events.naava_near(global_position))
+		"jallu":
+			try_drink()
+	return what
+
+
+func knockback(push: Vector3) -> void:
+	_knock = Vector3(push.x, 0.0, push.z)
+	velocity.y = push.y
 
 
 ## Juo lähin Jallu-cola, jos sellainen on ulottuvilla.
@@ -175,44 +262,78 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not is_multiplayer_authority() or _typing():
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
+		if riding:
+			# Kelkalla hiiri kääntää vain päätä, ohjaus on A/D-näppäimillä.
+			head.rotation.y = clampf(head.rotation.y - event.relative.x * MOUSE_SENSITIVITY, -2.0, 2.0)
+		else:
+			rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
 		head.rotation.x = clampf(head.rotation.x - event.relative.y * MOUSE_SENSITIVITY, -1.45, 1.45)
 	elif event.is_action_pressed("kolaa"):
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-		elif tool == Tools.LAPIO:
+		elif tool == Tools.LAPIO and not riding:
 			request_shovel()
 	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_E:
-		try_drink()
+		interact()
+	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F:
+		toggle_riding()
 	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode >= KEY_1 and event.physical_keycode < KEY_1 + Tools.COUNT:
 		select_tool(event.physical_keycode - KEY_1)
 	elif event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
-		select_tool(tool + (1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1))
+		var step := 1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1
+		select_tool(tool + step, step)
 
 
 func _physics_process(delta: float) -> void:
 	if not is_multiplayer_authority():
 		return
-	tool_active = force_active or tool != Tools.LAPIO and not _typing() and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and Input.is_action_pressed("kolaa")
+	tool_active = force_active or tool != Tools.LAPIO and not riding and not _typing() and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and Input.is_action_pressed("kolaa")
 	if not is_on_floor():
 		velocity.y -= _gravity * delta
-	elif Input.is_action_just_pressed("hyppy") and not _typing():
+	elif Input.is_action_just_pressed("hyppy") and not _typing() and not riding:
 		velocity.y = JUMP_VELOCITY
+	if riding:
+		_drive(delta)
+		return
 
 	var input := Vector2.ZERO if _typing() else Input.get_vector("vasen", "oikea", "eteen", "taakse")
 	var direction := (transform.basis * Vector3(input.x, 0.0, input.y)).normalized()
-	var depth: float = _main().snow.depth_at(global_position)
+	var depth: float = _main().depth_at(global_position)
 	var speed := lerpf(WALK_SPEED, DEEP_SNOW_SPEED, clampf(depth / DEEP_SNOW_CM, 0.0, 1.0))
 	if Input.is_action_pressed("juokse") and not _typing():
 		speed *= RUN_MULTIPLIER
 	if boost_time > 0.0:
 		speed *= BOOST_MULTIPLIER
-	velocity.x = direction.x * speed
-	velocity.z = direction.z * speed
+	velocity.x = direction.x * speed + _knock.x
+	velocity.z = direction.z * speed + _knock.z
+	_knock = _knock.move_toward(Vector3.ZERO, 18.0 * delta)
 	move_and_slide()
 
+	camera.fov = 75.0
 	# Syvässä lumessa silmät ovat hieman alempana.
 	head.position.y = 1.6 - minf(depth, 60.0) / 100.0 * 0.4
+
+
+## Moottorikelkka: W/S kaasu ja jarru, A/D ohjaus. Syvä lumi ei hidasta kelkkaa.
+func _drive(delta: float) -> void:
+	var throttle := 1.0 if force_drive else (0.0 if _typing() else Input.get_axis("taakse", "eteen"))
+	var steer := 0.0 if _typing() else Input.get_axis("oikea", "vasen")
+	if throttle > 0.0:
+		_speed = move_toward(_speed, SLED_MAX_SPEED * (BOOST_MULTIPLIER if boost_time > 0.0 else 1.0), SLED_ACCEL * delta)
+	elif throttle < 0.0:
+		_speed = move_toward(_speed, -SLED_REVERSE_SPEED, SLED_BRAKE * delta)
+	else:
+		_speed = move_toward(_speed, 0.0, 3.0 * delta)
+	var grip := clampf(absf(_speed) / 4.0, 0.0, 1.0) * signf(_speed if _speed != 0.0 else 1.0)
+	rotate_y(steer * SLED_TURN * grip * delta)
+	var forward := -transform.basis.z
+	velocity.x = forward.x * _speed
+	velocity.z = forward.z * _speed
+	move_and_slide()
+	if is_on_wall():
+		_speed *= 0.5
+	head.position.y = 1.6 + SLED_HEIGHT * 0.4
+	camera.fov = 75.0 + absf(_speed) * 0.8
 
 
 ## Pyydä palvelinta kauhomaan tai heittämään. Animaatio näytetään heti.
