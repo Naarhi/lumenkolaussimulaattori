@@ -129,35 +129,66 @@ func _main():
 
 
 func _make_shovel() -> Node3D:
+	# Juuri on kädessä (kuvan oikea alakulma), joten heilautus kiertää kahvan ympäri.
 	var root := Node3D.new()
 	root.name = "Shovel"
-	root.position = Vector3(0.32, -0.55, -0.55)
+	root.position = Vector3(0.34, -0.44, -0.4)
+	var blade_center := Vector3(-0.26, -0.32, -0.96)
+	var blade_back := Vector3(-0.23, -0.29, -0.78)
+	var axis := blade_back
 	var shaft := MeshInstance3D.new()
 	var cylinder := CylinderMesh.new()
 	cylinder.top_radius = 0.018
-	cylinder.bottom_radius = 0.018
-	cylinder.height = 1.1
+	cylinder.bottom_radius = 0.02
+	cylinder.height = axis.length() + 0.12
 	shaft.mesh = cylinder
 	shaft.material_override = _mat(Color(0.75, 0.6, 0.35))
-	shaft.rotation.x = deg_to_rad(-60.0)
-	shaft.position = Vector3(0, 0.2, 0.1)
+	shaft.basis = Basis(Quaternion(Vector3.UP, -axis.normalized()))
+	shaft.position = axis * 0.5 - axis.normalized() * 0.06
 	root.add_child(shaft)
+	var grip := MeshInstance3D.new()
+	var grip_mesh := CylinderMesh.new()
+	grip_mesh.top_radius = 0.022
+	grip_mesh.bottom_radius = 0.022
+	grip_mesh.height = 0.14
+	grip.mesh = grip_mesh
+	grip.material_override = _mat(Color(0.12, 0.12, 0.12))
+	grip.position = -axis.normalized() * 0.12
+	grip.rotation.z = PI * 0.5
+	root.add_child(grip)
 	var blade := MeshInstance3D.new()
 	var blade_mesh := BoxMesh.new()
 	blade_mesh.size = Vector3(0.42, 0.03, 0.38)
 	blade.mesh = blade_mesh
 	blade.material_override = _mat(Color(0.1, 0.35, 0.8))
-	blade.position = Vector3(0, -0.25, -0.42)
+	blade.position = blade_center
+	blade.rotation = Vector3(-0.12, atan2(-axis.x, -axis.z), 0)
 	root.add_child(blade)
+	# Terän takareuna ja sivulaidat
+	var back := MeshInstance3D.new()
+	var back_mesh := BoxMesh.new()
+	back_mesh.size = Vector3(0.42, 0.09, 0.02)
+	back.mesh = back_mesh
+	back.material_override = blade.material_override
+	back.position = Vector3(0, 0.045, 0.18)
+	blade.add_child(back)
+	for side in [-1.0, 1.0]:
+		var rim := MeshInstance3D.new()
+		var rim_mesh := BoxMesh.new()
+		rim_mesh.size = Vector3(0.02, 0.07, 0.38)
+		rim.mesh = rim_mesh
+		rim.material_override = blade.material_override
+		rim.position = Vector3(side * 0.2, 0.035, 0)
+		blade.add_child(rim)
 	shovel_snow = MeshInstance3D.new()
 	var lump := SphereMesh.new()
 	lump.radius = 0.17
 	lump.height = 0.18
 	shovel_snow.mesh = lump
 	shovel_snow.material_override = _mat(Color(0.95, 0.97, 1.0))
-	shovel_snow.position = Vector3(0, -0.18, -0.42)
+	shovel_snow.position = Vector3(0, 0.07, 0)
 	shovel_snow.visible = false
-	root.add_child(shovel_snow)
+	blade.add_child(shovel_snow)
 	return root
 
 
