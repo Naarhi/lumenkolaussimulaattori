@@ -29,6 +29,8 @@ var _xp_bar: ProgressBar
 var _carry_label: Label
 var _popup: Label
 var _tool_labels: Array[Label] = []
+var _hint: Label
+var _boost_label: Label
 
 
 func _ready() -> void:
@@ -118,7 +120,7 @@ func _build_menu() -> void:
 	box.add_child(_button("Yksinpeli", func(): _main().start_singleplayer()))
 	box.add_child(_button("Lopeta", func(): get_tree().quit()))
 
-	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · Esc valikko", 13, Color(0.8, 0.78, 0.7))
+	var help := _label("WASD liiku · Shift juokse · Välilyönti hyppää · Enter chat\n1–5 tai rulla vaihtaa työkalua · Hiiri: käytä · E juo · Esc valikko", 13, Color(0.8, 0.78, 0.7))
 	help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(help)
 
@@ -200,8 +202,19 @@ func _build_game_ui() -> void:
 	skill_box.add_child(_xp_bar)
 	_carry_label = _label("", 14, Color(0.85, 0.9, 1.0))
 	skill_box.add_child(_carry_label)
+	_boost_label = _label("", 15, Color(1.0, 0.75, 0.3))
+	skill_box.add_child(_boost_label)
 	set_xp(0)
 	set_carrying(0)
+	set_boost(0.0)
+
+	_hint = _label("", 20, Color.WHITE)
+	_hint.add_theme_color_override("font_outline_color", Color.BLACK)
+	_hint.add_theme_constant_override("outline_size", 5)
+	_hint.set_anchors_preset(Control.PRESET_CENTER)
+	_hint.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_hint.position.y = 140
+	_game.add_child(_hint)
 
 	# Työkalupalkki alas keskelle
 	var bar_panel := PanelContainer.new()
@@ -248,6 +261,18 @@ func set_xp(value: int) -> void:
 func set_tool(index: int) -> void:
 	for i in _tool_labels.size():
 		_tool_labels[i].add_theme_color_override("font_color", OSRS_YELLOW if i == index else Color(0.75, 0.72, 0.65))
+
+
+func set_hint(text: String) -> void:
+	if _hint.text != text:
+		_hint.text = text
+
+
+func set_boost(seconds: float) -> void:
+	var text := "Jallu-boosti %d s" % ceili(seconds) if seconds > 0.0 else ""
+	_boost_label.visible = text != ""
+	if _boost_label.text != text:
+		_boost_label.text = text
 
 
 func set_carrying(amount: int) -> void:

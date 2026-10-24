@@ -541,6 +541,72 @@ static func make_snowmobile() -> Node3D:
 	return sled
 
 
+## Pertin tuoma Jallu-cola: Jaloviinapullo ja kolatölkki lumessa, kultainen hehku löytämisen avuksi.
+static func make_jallu() -> Node3D:
+	var root := Node3D.new()
+	root.name = "JalluCola"
+	var bottle := Node3D.new()
+	bottle.position.y = SNOW_LEVEL
+	bottle.rotation_degrees.z = 8
+	bottle.scale = Vector3.ONE * 1.6
+	root.add_child(bottle)
+	var glass := Color(0.35, 0.18, 0.06)
+	var body := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.045
+	cyl.bottom_radius = 0.045
+	cyl.height = 0.2
+	body.mesh = cyl
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(glass, 0.85)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 0.1
+	mat.metallic_specular = 0.9
+	body.material_override = mat
+	body.position.y = 0.1
+	bottle.add_child(body)
+	var neck := MeshInstance3D.new()
+	var neck_mesh := CylinderMesh.new()
+	neck_mesh.top_radius = 0.014
+	neck_mesh.bottom_radius = 0.04
+	neck_mesh.height = 0.1
+	neck.mesh = neck_mesh
+	neck.material_override = mat
+	neck.position.y = 0.25
+	bottle.add_child(neck)
+	_box(bottle, Vector3(0.03, 0.025, 0.03), Vector3(0, 0.31, 0), Color(0.85, 0.7, 0.2), 0.3)
+	var label := Label3D.new()
+	label.text = "JALLU"
+	label.font_size = 22
+	label.pixel_size = 0.003
+	label.modulate = Color(1.0, 0.85, 0.3)
+	label.outline_size = 4
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.position.y = 0.12
+	bottle.add_child(label)
+	# Kolatölkki vieressä
+	var can := MeshInstance3D.new()
+	var can_mesh := CylinderMesh.new()
+	can_mesh.top_radius = 0.033
+	can_mesh.bottom_radius = 0.033
+	can_mesh.height = 0.12
+	can.mesh = can_mesh
+	can.material_override = _mat(Color(0.75, 0.05, 0.05), 0.3)
+	can.position = Vector3(0.16, SNOW_LEVEL + 0.06, 0.05)
+	can.scale = Vector3.ONE * 1.4
+	root.add_child(can)
+	var glow := OmniLight3D.new()
+	glow.light_color = Color(1.0, 0.75, 0.3)
+	glow.light_energy = 1.2
+	glow.omni_range = 1.5
+	glow.position.y = SNOW_LEVEL + 0.4
+	root.add_child(glow)
+	var tween := root.create_tween().set_loops()
+	tween.tween_property(glow, "light_energy", 0.3, 0.6)
+	tween.tween_property(glow, "light_energy", 1.4, 0.6)
+	return root
+
+
 # --- Apufunktiot --------------------------------------------------------------------
 
 ## Pehmeä, häipyvä lumipöly- tai savupartikkeli.

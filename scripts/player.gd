@@ -6,6 +6,7 @@ const WALK_SPEED := 4.5
 const DEEP_SNOW_SPEED := 1.7
 const DEEP_SNOW_CM := 60.0
 const RUN_MULTIPLIER := 1.6
+const BOOST_MULTIPLIER := 1.5
 const JUMP_VELOCITY := 4.2
 const MOUSE_SENSITIVITY := 0.0025
 const Tools := preload("res://scripts/tools.gd")
@@ -20,6 +21,8 @@ var tool := 0
 var tool_active := false
 ## Testiajo pitää työkalua pohjassa ilman hiirtä.
 var force_active := false
+## Jallu-boostia jäljellä sekunteina (palvelin asettaa kaikille).
+var boost_time := 0.0
 var head: Node3D
 var camera: Camera3D
 var shovel: Node3D
@@ -128,6 +131,13 @@ func select_tool(index: int) -> void:
 
 
 func _process(delta: float) -> void:
+	boost_time = maxf(boost_time - delta, 0.0)
+	if is_multiplayer_authority():
+		var hud = _main().hud
+		hud.set_boost(boost_time)
+		hud.set_hint("E: juo Jallu-colaa" if _main().events.bottle_near(global_position) >= 0 else "")
+	# Boostissa näkymä keinuu hieman.
+	camera.rotation.z = sin(Time.get_ticks_msec() * 0.003) * 0.03 * minf(boost_time, 1.0)
 	if not _tool_models[tool].visible:
 		_show_tool()
 	for t in _tool_fx:
@@ -142,6 +152,15 @@ func _process(delta: float) -> void:
 		var sound := Tools.sound_for(tool)
 		if sound >= 0:
 			Sfx.play_at(sound, global_position + Vector3(0, 1, 0), self)
+
+
+## Juo lähin Jallu-cola, jos sellainen on ulottuvilla.
+func try_drink() -> bool:
+	var id: int = _main().events.bottle_near(global_position)
+	if id < 0:
+		return false
+	_main().events.srv_drink.rpc_id(1, id)
+	return true
 
 
 func set_display_name(player_name: String, level: int) -> void:
@@ -163,6 +182,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		elif tool == Tools.LAPIO:
 			request_shovel()
+	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_E:
+		try_drink()
 	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode >= KEY_1 and event.physical_keycode < KEY_1 + Tools.COUNT:
 		select_tool(event.physical_keycode - KEY_1)
 	elif event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
@@ -184,6 +205,8 @@ func _physics_process(delta: float) -> void:
 	var speed := lerpf(WALK_SPEED, DEEP_SNOW_SPEED, clampf(depth / DEEP_SNOW_CM, 0.0, 1.0))
 	if Input.is_action_pressed("juokse") and not _typing():
 		speed *= RUN_MULTIPLIER
+	if boost_time > 0.0:
+		speed *= BOOST_MULTIPLIER
 	velocity.x = direction.x * speed
 	velocity.z = direction.z * speed
 	move_and_slide()
