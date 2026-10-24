@@ -30,6 +30,11 @@ var scenery := {}
 # Palvelimen tila pelaajittain.
 var _carried := {}
 var _xp := {}
+# Palvelin: tallennetut XP:t nimen mukaan (pienillä kirjaimilla). Tallennetaan levylle.
+var _saved_xp := {}
+var _save_dirty := false
+var _save_timer := 0.0
+var _levels := {}
 var _last_shovel := {}
 var _footprint_timer := {}
 var _names := {}
@@ -87,6 +92,7 @@ func _start_server(is_dedicated: bool) -> void:
 		return
 	snow.start_server()
 	events.start_server()
+	_load_xp()
 	if not is_dedicated:
 		spawner.spawn(1)
 		_enter_game()
@@ -120,15 +126,16 @@ func _on_peer_connected(id: int) -> void:
 	print("[Peli] Pelaaja %d liittyi" % id)
 	snow.send_full_state(id)
 	spawner.spawn(id)
-	_cl_xp.rpc_id(id, 0, false)
 	for peer in _names:
-		_cl_name.rpc_id(id, peer, _names[peer])
+		_cl_name.rpc_id(id, peer, _names[peer], Skills.level_for_xp(_xp.get(peer, 0)))
 
 
 func _on_peer_disconnected(id: int) -> void:
 	if not multiplayer.is_server():
 		return
 	print("[Peli] Pelaaja %d poistui" % id)
+	_store_xp(id)
+	_write_xp()
 	if _names.has(id):
 		_cl_announce.rpc("%s lähti pihalta." % _names[id])
 		_names.erase(id)
@@ -136,6 +143,7 @@ func _on_peer_disconnected(id: int) -> void:
 	if player:
 		player.queue_free()
 	_carried.erase(id)
+	_xp.erase(id)
 	_xp_pending.erase(id)
 	_tool_timer.erase(id)
 
@@ -217,8 +225,50 @@ func _add_xp(peer: int, amount: int) -> void:
 	var old: int = _xp.get(peer, 0)
 	var new_xp := old + amount
 	_xp[peer] = new_xp
+	_store_xp(peer)
 	var leveled := Skills.level_for_xp(new_xp) > Skills.level_for_xp(old)
 	_cl_xp.rpc_id(peer, new_xp, leveled)
+	if leveled and _names.has(peer):
+		_cl_name.rpc(peer, _names[peer], Skills.level_for_xp(new_xp))
+
+
+# --- XP:n tallennus ----------------------------------------------------------------
+
+func _save_path() -> String:
+	return Net.cli.get("save", "user://kolaajat.json")
+
+
+func _load_xp() -> void:
+	var file := FileAccess.open(_save_path(), FileAccess.READ)
+	if file == null:
+		return
+	var data = JSON.parse_string(file.get_as_text())
+	if data is Dictionary:
+		for key in data:
+			_saved_xp[str(key)] = int(data[key])
+	print("[Peli] Ladattu %d kolaajan XP:t tiedostosta %s" % [_saved_xp.size(), ProjectSettings.globalize_path(_save_path())])
+
+
+func _store_xp(peer: int) -> void:
+	if _names.has(peer) and _xp.has(peer):
+		_saved_xp[String(_names[peer]).to_lower()] = _xp[peer]
+		_save_dirty = true
+
+
+func _write_xp() -> void:
+	if not _save_dirty:
+		return
+	_save_dirty = false
+	var file := FileAccess.open(_save_path(), FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(_saved_xp, "\t"))
+	else:
+		push_warning("XP:n tallennus epäonnistui: %s" % _save_path())
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE:
+		_write_xp()
 
 
 # --- Nimet ja chat ---------------------------------------------------------------
@@ -230,22 +280,42 @@ func srv_set_name(player_name: String) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if sender == 0:
 		sender = multiplayer.get_unique_id()
+	if _names.has(sender):
+		return
 	var clean := _clean_text(player_name, 16)
 	if clean == "":
 		clean = "Kolaaja%d" % (sender % 1000)
-	var first := not _names.has(sender)
+	# Sama nimi ei voi olla kahdella paikalla olevalla pelaajalla (XP jaettaisiin).
+	var taken := false
+	for peer in _names:
+		if String(_names[peer]).to_lower() == clean.to_lower():
+			taken = true
+	if taken:
+		clean = "%s%d" % [clean.left(13), randi_range(10, 99)]
 	_names[sender] = clean
-	_cl_name.rpc(sender, clean)
-	if first:
+	var xp: int = _saved_xp.get(clean.to_lower(), 0)
+	_xp[sender] = xp
+	_cl_xp.rpc_id(sender, xp, false)
+	var level := Skills.level_for_xp(xp)
+	_cl_name.rpc(sender, clean, level)
+	if xp > 0:
+		_cl_announce.rpc("%s (Kolaus-taso %d) palasi pihalle!" % [clean, level])
+	else:
 		_cl_announce.rpc("%s saapui pihalle!" % clean)
 
 
 @rpc("authority", "call_local", "reliable")
-func _cl_name(peer: int, player_name: String) -> void:
+func _cl_name(peer: int, player_name: String, level: int) -> void:
 	_names[peer] = player_name
+	_levels[peer] = level
 	var player = players.get_node_or_null(str(peer))
 	if player:
-		player.set_display_name(player_name)
+		player.set_display_name(player_name, level)
+
+
+## Nimikyltin teksti pelaajalle, jos nimi on jo tiedossa (pelaaja voi syntyä vasta nimen jälkeen).
+func display_name_for(peer: int) -> Array:
+	return [_names.get(peer, ""), _levels.get(peer, 1)]
 
 
 func send_chat(text: String) -> void:
@@ -292,6 +362,10 @@ func _physics_process(delta: float) -> void:
 	if multiplayer.is_server() and multiplayer.has_multiplayer_peer():
 		_server_footprints(delta)
 		_server_tools(delta)
+		_save_timer -= delta
+		if _save_timer <= 0.0:
+			_save_timer = 10.0
+			_write_xp()
 	if not Net.cli.has("autotest") or _autotest_started:
 		return
 	if local_player():

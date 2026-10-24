@@ -92,6 +92,8 @@ func _ready() -> void:
 	_body.visible = not mine
 	if mine:
 		add_to_group("local_player")
+	var shown: Array = _main().display_name_for(peer_id)
+	set_display_name(shown[0], shown[1])
 
 
 func _build_tools() -> void:
@@ -142,8 +144,8 @@ func _process(delta: float) -> void:
 			Sfx.play_at(sound, global_position + Vector3(0, 1, 0), self)
 
 
-func set_display_name(player_name: String) -> void:
-	_nametag.text = player_name
+func set_display_name(player_name: String, level: int) -> void:
+	_nametag.text = "%s (taso %d)" % [player_name, level] if player_name != "" else ""
 
 
 func _typing() -> bool:
