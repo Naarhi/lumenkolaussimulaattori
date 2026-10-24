@@ -1,7 +1,7 @@
 extends Node
 ## Old School RuneScapen henkiset 8-bittiset äänet, jotka syntetisoidaan koodissa.
 
-enum { SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP, COINS, SLED, OOF }
+enum { SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP, COINS, SLED, OOF, DANCE }
 
 const MIX_RATE := 22050
 const BUS := "Efektit"
@@ -14,7 +14,7 @@ var _buf := PackedFloat32Array()
 
 func _ready() -> void:
 	_setup_buses()
-	for kind in [SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP, COINS, SLED, OOF]:
+	for kind in [SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP, COINS, SLED, OOF, DANCE]:
 		_streams[kind] = _make_stream(kind)
 
 
@@ -125,6 +125,14 @@ func _make_stream(kind: int) -> AudioStreamWAV:
 			for i in 8:
 				_square(i * 0.035, 0.035, 150.0, 130.0, 0.14, 0.35)
 			_noise(rng, 0.0, 0.28, 0.4, 0.1)
+		DANCE:
+			# Lyhyt humppa: umpa-umpa-basso ja pirteä pulssiaaltomelodia
+			var melody := [659.25, 783.99, 880.0, 783.99, 659.25, 587.33, 523.25, 587.33]
+			for i in 8:
+				var beat := i * 0.25
+				_square(beat, 0.1, 130.81 if i % 2 == 0 else 196.0, 130.81 if i % 2 == 0 else 196.0, 0.18, 0.5)
+				_square(beat + 0.125, 0.08, 523.25, 523.25, 0.07, 0.5)
+				_square(beat, 0.2, melody[i], melody[i], 0.13, 0.25)
 		OOF:
 			# Hirven kavio osuu: tömähdys ja "uuh"
 			_noise(rng, 0.0, 0.08, 0.6, 0.5)

@@ -18,6 +18,15 @@ const SLED_ACCEL := 7.0
 const SLED_BRAKE := 12.0
 const SLED_TURN := 1.9
 const SLED_HEIGHT := 0.25
+## Tanssit: näppäin, nimi ja kesto (0 = kunnes liikkuu).
+enum { EI_TANSSIA = -1, HUMPPA, LETKAJENKKA, TUULETUS, KUMARRUS }
+const EMOTES := [
+	{"key": KEY_Z, "name": "Humppa", "time": 0.0},
+	{"key": KEY_X, "name": "Letkajenkka", "time": 0.0},
+	{"key": KEY_C, "name": "Tuuletus", "time": 3.0},
+	{"key": KEY_V, "name": "Kumarrus", "time": 2.0},
+]
+const RAGDOLL_TIME := 3.5
 const JACKET_COLORS := [
 	Color(0.75, 0.12, 0.1), Color(0.1, 0.3, 0.7), Color(0.95, 0.55, 0.1),
 	Color(0.15, 0.5, 0.25), Color(0.5, 0.2, 0.6), Color(0.85, 0.75, 0.2),
@@ -35,6 +44,14 @@ var boost_time := 0.0
 var riding := false
 ## Testiajo painaa kaasua ilman näppäimistöä.
 var force_drive := false
+## Käynnissä oleva tanssi (synkronoidaan) ja sen alkuhetki tällä koneella.
+var emote := -1
+var _emote_seen := -1
+var _emote_clock := 0.0
+## Aura-auton heittämänä lentäminen: jäljellä oleva aika ja pyörimisakseli.
+var ragdoll_time := 0.0
+var _spin_axis := Vector3.RIGHT
+var _arms: Array[Node3D] = []
 var head: Node3D
 var camera: Camera3D
 var shovel: Node3D
@@ -100,7 +117,7 @@ func _init() -> void:
 	sync.name = "Sync"
 	sync.root_path = NodePath("..")
 	var config := SceneReplicationConfig.new()
-	for path in [NodePath(".:position"), NodePath(".:rotation"), NodePath("Head:rotation"), NodePath(".:tool"), NodePath(".:tool_active"), NodePath(".:riding")]:
+	for path in [NodePath(".:position"), NodePath(".:rotation"), NodePath("Head:rotation"), NodePath(".:tool"), NodePath(".:tool_active"), NodePath(".:riding"), NodePath(".:emote")]:
 		config.add_property(path)
 		config.property_set_spawn(path, true)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -142,7 +159,7 @@ func _build_tools() -> void:
 
 func _show_tool() -> void:
 	for i in _tool_models.size():
-		_tool_models[i].visible = i == tool and not riding
+		_tool_models[i].visible = i == tool and not riding and emote < 0 and ragdoll_time <= 0.0
 
 
 ## Valitse työkalu. Ostamatonta ei voi valita; rullalla (step) hypätään seuraavaan omaan.
@@ -183,8 +200,9 @@ func _process(delta: float) -> void:
 	# Boostissa näkymä keinuu hieman.
 	camera.rotation.z = sin(Time.get_ticks_msec() * 0.003) * 0.03 * minf(boost_time, 1.0)
 	_sled.visible = riding
-	_body.position.y = 0.5 if riding else 0.0
-	if _tool_models[tool].visible == riding:
+	_animate_body(delta)
+	var tool_shown := not riding and emote < 0 and ragdoll_time <= 0.0
+	if _tool_models[tool].visible != tool_shown:
 		_show_tool()
 	for t in _tool_fx:
 		_tool_fx[t].emitting = tool_active and tool == t
@@ -277,6 +295,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		interact()
 	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F:
 		toggle_riding()
+	elif event is InputEventKey and event.pressed and not event.echo and not riding:
+		for i in EMOTES.size():
+			if event.physical_keycode == EMOTES[i]["key"]:
+				start_emote(-1 if emote == i else i)
 	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode >= KEY_1 and event.physical_keycode < KEY_1 + Tools.COUNT:
 		select_tool(event.physical_keycode - KEY_1)
 	elif event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
@@ -292,11 +314,17 @@ func _physics_process(delta: float) -> void:
 		velocity.y -= _gravity * delta
 	elif Input.is_action_just_pressed("hyppy") and not _typing() and not riding:
 		velocity.y = JUMP_VELOCITY
+	if ragdoll_time > 0.0:
+		_fly(delta)
+		return
 	if riding:
 		_drive(delta)
 		return
 
 	var input := Vector2.ZERO if _typing() else Input.get_vector("vasen", "oikea", "eteen", "taakse")
+	# Liikkuminen tai työkalu keskeyttää tanssin.
+	if emote >= 0 and (input != Vector2.ZERO or tool_active):
+		start_emote(-1)
 	var direction := (transform.basis * Vector3(input.x, 0.0, input.y)).normalized()
 	var depth: float = _main().depth_at(global_position)
 	var speed := lerpf(WALK_SPEED, DEEP_SNOW_SPEED, clampf(depth / DEEP_SNOW_CM, 0.0, 1.0))
@@ -312,6 +340,96 @@ func _physics_process(delta: float) -> void:
 	camera.fov = 75.0
 	# Syvässä lumessa silmät ovat hieman alempana.
 	head.position.y = 1.6 - minf(depth, 60.0) / 100.0 * 0.4
+
+
+## Aloita tai lopeta tanssi (-1). Vain oma pelaaja.
+func start_emote(index: int) -> void:
+	emote = index
+	_set_third_person(emote >= 0)
+
+
+## Aura-auto osui: pelaaja lentää ja pyörii hetken (kaikilla koneilla näkyy pyöriminen).
+func start_ragdoll(push: Vector3) -> void:
+	ragdoll_time = RAGDOLL_TIME
+	_spin_axis = Vector3(randf_range(-1, 1), randf_range(-0.3, 0.3), randf_range(-1, 1)).normalized()
+	if is_multiplayer_authority():
+		if riding:
+			toggle_riding()
+		emote = -1
+		velocity = push
+		_set_third_person(true)
+
+
+func _fly(delta: float) -> void:
+	velocity.y -= _gravity * delta
+	if is_on_floor() and velocity.y <= 0.0:
+		velocity.x = move_toward(velocity.x, 0.0, 12.0 * delta)
+		velocity.z = move_toward(velocity.z, 0.0, 12.0 * delta)
+	move_and_slide()
+	if ragdoll_time - delta <= 0.0:
+		_set_third_person(false)
+
+
+## Kolmannen persoonan kamera tanssiessa ja lentäessä, jotta oman hahmon näkee.
+func _set_third_person(on: bool) -> void:
+	if not is_multiplayer_authority():
+		return
+	camera.position = Vector3(0, 0.6, 3.6) if on else Vector3.ZERO
+	camera.rotation.x = -0.2 if on else 0.0
+	_body.visible = on
+	_show_tool()
+
+
+func _animate_body(delta: float) -> void:
+	if emote != _emote_seen:
+		_emote_seen = emote
+		_emote_clock = 0.0
+		if emote >= 0 and DisplayServer.get_name() != "headless":
+			Sfx.play_at(Sfx.DANCE, global_position + Vector3(0, 1, 0), self)
+	_emote_clock += delta
+	var t := _emote_clock
+	var pos := Vector3(0, 0.5 if riding else 0.0, 0)
+	var rot := Vector3.ZERO
+	var arm_l := Vector3.ZERO
+	var arm_r := Vector3.ZERO
+	if ragdoll_time > 0.0:
+		ragdoll_time = maxf(ragdoll_time - delta, 0.0)
+		# Lennossa pyöritään, maassa maataan kyljellään.
+		var spin := 14.0 * minf(ragdoll_time, 1.0)
+		_body.rotate(_spin_axis, spin * delta)
+		_body.position = Vector3(0, 0.5, 0)
+		for arm in _arms:
+			arm.rotation.z = sin(Time.get_ticks_msec() * 0.02 + arm.position.x * 10.0) * 2.0
+		if ragdoll_time <= 0.0:
+			_body.rotation = Vector3.ZERO
+		return
+	match emote:
+		HUMPPA:
+			pos.y = absf(sin(t * 6.5)) * 0.12
+			rot.y = sin(t * 3.25) * 0.5
+			arm_l.x = sin(t * 6.5) * 1.1
+			arm_r.x = -sin(t * 6.5) * 1.1
+		LETKAJENKKA:
+			pos.y = maxf(sin(t * 8.0), 0.0) * 0.25
+			rot.z = sin(t * 4.0) * 0.2
+			arm_l.z = -1.3
+			arm_r.z = 1.3
+		TUULETUS:
+			pos.y = absf(sin(t * 5.0)) * 0.3
+			arm_l.z = -2.7 + sin(t * 12.0) * 0.3
+			arm_r.z = 2.7 - sin(t * 12.0) * 0.3
+		KUMARRUS:
+			pos = Vector3(0, 0, -0.25 * minf(t * 3.0, 1.0))
+			rot.x = -0.6 * minf(t * 3.0, 1.0)
+			arm_l.x = 0.4
+			arm_r.x = 0.4
+	if emote >= 0 and EMOTES[emote]["time"] > 0.0 and t > EMOTES[emote]["time"] and is_multiplayer_authority():
+		start_emote(-1)
+	_body.position = pos
+	_body.rotation = rot
+	if _arms.size() == 2:
+		_arms[0].rotation = arm_l
+		_arms[1].rotation = arm_r
 
 
 ## Moottorikelkka: W/S kaasu ja jarru, A/D ohjaus. Syvä lumi ei hidasta kelkkaa.
@@ -427,6 +545,28 @@ func _build_body(jacket: Color) -> void:
 	torso.material_override = _mat(jacket)
 	torso.position.y = 0.8
 	_body.add_child(torso)
+	# Kädet olkapäistä, jotta tanssit näkyvät.
+	for side in [-1.0, 1.0]:
+		var shoulder := Node3D.new()
+		shoulder.position = Vector3(side * 0.34, 1.3, 0)
+		_body.add_child(shoulder)
+		var arm := MeshInstance3D.new()
+		var arm_mesh := CapsuleMesh.new()
+		arm_mesh.radius = 0.08
+		arm_mesh.height = 0.62
+		arm.mesh = arm_mesh
+		arm.material_override = torso.material_override
+		arm.position.y = -0.28
+		shoulder.add_child(arm)
+		var mitten := MeshInstance3D.new()
+		var mitten_mesh := SphereMesh.new()
+		mitten_mesh.radius = 0.08
+		mitten_mesh.height = 0.16
+		mitten.mesh = mitten_mesh
+		mitten.material_override = _mat(Color(0.15, 0.15, 0.18))
+		mitten.position.y = -0.6
+		shoulder.add_child(mitten)
+		_arms.append(shoulder)
 	var face := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
 	sphere.radius = 0.16
