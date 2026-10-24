@@ -1,7 +1,7 @@
 extends Node
 ## Old School RuneScapen henkiset 8-bittiset äänet, jotka syntetisoidaan koodissa.
 
-enum { SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE }
+enum { SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP }
 
 const MIX_RATE := 22050
 const BUS := "Efektit"
@@ -14,7 +14,7 @@ var _buf := PackedFloat32Array()
 
 func _ready() -> void:
 	_setup_buses()
-	for kind in [SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE]:
+	for kind in [SCOOP, THROW, LEVEL_UP, ANNOUNCE, FOOTSTEP, ENGINE, FLAME, SALT, SCRAPE, DRINK, BURP]:
 		_streams[kind] = _make_stream(kind)
 
 
@@ -107,6 +107,14 @@ func _make_stream(kind: int) -> AudioStreamWAV:
 		SALT:
 			for i in 5:
 				_noise(rng, i * 0.04, 0.03, 0.9, 0.12)
+		DRINK:
+			# Glug glug glug
+			for i in 4:
+				_square(i * 0.16, 0.1, 240.0 - i * 20.0, 150.0, 0.2, 0.5)
+				_noise(rng, i * 0.16, 0.06, 0.3, 0.15)
+		BURP:
+			_square(0.0, 0.45, 110.0, 70.0, 0.3, 0.35)
+			_noise(rng, 0.0, 0.45, 0.2, 0.2)
 		SCRAPE:
 			_noise(rng, 0.0, 0.25, 0.5, 0.25)
 			_square(0.0, 0.25, 140.0, 120.0, 0.05, 0.15)

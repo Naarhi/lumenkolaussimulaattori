@@ -35,6 +35,8 @@ var _saved_xp := {}
 var _save_dirty := false
 var _save_timer := 0.0
 var _levels := {}
+# Palvelin: Jallu-boostin päättymishetki pelaajittain (ms).
+var _boost_until := {}
 var _last_shovel := {}
 var _footprint_timer := {}
 var _names := {}
@@ -138,6 +140,7 @@ func _on_peer_connected(id: int) -> void:
 		return
 	print("[Peli] Pelaaja %d liittyi" % id)
 	snow.send_full_state(id)
+	events.send_bottles(id)
 	spawner.spawn(id)
 	for peer in _names:
 		_cl_name.rpc_id(id, peer, _names[peer], Skills.level_for_xp(_xp.get(peer, 0)))
@@ -209,7 +212,8 @@ func srv_shovel(yaw: float) -> void:
 	if player == null:
 		return
 	var now := Time.get_ticks_msec()
-	if now - int(_last_shovel.get(sender, -100000)) < SHOVEL_COOLDOWN_MS:
+	var cooldown := SHOVEL_COOLDOWN_MS / 2 if now < int(_boost_until.get(sender, 0)) else SHOVEL_COOLDOWN_MS
+	if now - int(_last_shovel.get(sender, -100000)) < cooldown:
 		return
 	_last_shovel[sender] = now
 
@@ -367,6 +371,23 @@ static func _clean_text(text: String, max_length: int) -> String:
 	return out.strip_edges().left(max_length)
 
 
+## Palvelin: Jallu-cola nopeuttaa juojan liikettä ja lapiota.
+func start_boost(peer: int, seconds: float) -> void:
+	_boost_until[peer] = Time.get_ticks_msec() + int(seconds * 1000.0)
+	_cl_boost.rpc(peer, seconds)
+	_cl_announce.rpc("%s joi Jallu-colaa! Lapio heiluu nyt tuplavauhtia." % _names.get(peer, "Joku"))
+
+
+@rpc("authority", "call_local", "reliable")
+func _cl_boost(peer: int, seconds: float) -> void:
+	var player = players.get_node_or_null(str(peer))
+	if player:
+		player.boost_time = seconds
+	if not dedicated and player:
+		Sfx.play_at(Sfx.DRINK, player.global_position + Vector3(0, 1.5, 0), self)
+		get_tree().create_timer(0.8).timeout.connect(func(): if is_instance_valid(player): Sfx.play_at(Sfx.BURP, player.global_position + Vector3(0, 1.5, 0), self))
+
+
 func announce(text: String) -> void:
 	_cl_announce.rpc(text)
 
@@ -513,10 +534,24 @@ func _run_autotest() -> void:
 		await get_tree().create_timer(4.0).timeout
 	await get_tree().create_timer(1.0).timeout
 	var depth_after: float = snow.depth_at(me.global_position + Vector3(0, 0, -probe))
+	var jallu_ok := true
+	if Net.cli.has("jallu") and multiplayer.is_server():
+		events.trigger(events.JALLU)
+		await get_tree().create_timer(0.3).timeout
+		var spot: Vector3 = events.bottles.values()[0]
+		me.global_position = spot + Vector3(0.3, 0.05, 0)
+		await get_tree().create_timer(0.3).timeout
+		var drank: bool = me.try_drink()
+		await get_tree().create_timer(0.5).timeout
+		jallu_ok = drank and me.boost_time > 0.0 and events.bottles.size() == events.BOTTLES_PER_DELIVERY - 1
+		print("AUTOTEST Jallu-cola: joi %s, boostia %.1f s, pulloja jäljellä %d" % [drank, me.boost_time, events.bottles.size()])
 	print("AUTOTEST %s: lumi ennen %.0f cm, jälkeen %.0f cm, XP %d" % [Tools.NAMES[tool], depth_before, depth_after, hud.xp])
 	if Net.cli.has("screenshot"):
 		me.rotation.y = deg_to_rad(float(Net.cli.get("yaw", "0")))
 		me.head.rotation.x = -0.35
+		if Net.cli.has("jallu") and not events.bottles.is_empty():
+			me.global_position = events.bottles.values()[0] + Vector3(0, 0.05, 1.3)
+			me.head.rotation.x = -0.6
 		if Net.cli.has("pause"):
 			hud._open_pause()
 		if Net.cli.has("event") and multiplayer.is_server():
@@ -526,6 +561,6 @@ func _run_autotest() -> void:
 		image.save_png(Net.cli["screenshot"])
 		print("AUTOTEST kuvakaappaus " + Net.cli["screenshot"])
 	me.force_active = false
-	var ok: bool = depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
+	var ok: bool = jallu_ok and depth_after < depth_before and (hud.xp > 0 or tool == Tools.SUOLA)
 	print("AUTOTEST " + ("OK" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
