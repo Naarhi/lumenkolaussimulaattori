@@ -2,6 +2,7 @@
 
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
+#include "LumiRetroSounds.h"
 
 void ALumiGameState::MulticastAnnounce_Implementation(const FText& Message)
 {
@@ -10,10 +11,7 @@ void ALumiGameState::MulticastAnnounce_Implementation(const FText& Message)
 		return;
 	}
 
-	if (AnnouncementSound)
-	{
-		UGameplayStatics::PlaySound2D(this, AnnouncementSound);
-	}
+	UGameplayStatics::PlaySound2D(this, AnnouncementSound ? AnnouncementSound.Get() : LumiRetroSounds::Create(this, ELumiRetroSound::Announcement));
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 8.f, FColor::Cyan, Message.ToString());

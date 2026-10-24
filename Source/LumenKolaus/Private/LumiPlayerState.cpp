@@ -2,6 +2,7 @@
 
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
+#include "LumiRetroSounds.h"
 #include "Net/UnrealNetwork.h"
 
 namespace
@@ -63,10 +64,7 @@ void ALumiPlayerState::AddKolausXP(int32 Amount)
 
 void ALumiPlayerState::ClientKolausLevelUp_Implementation(int32 NewLevel)
 {
-	if (LevelUpSound)
-	{
-		UGameplayStatics::PlaySound2D(this, LevelUpSound);
-	}
+	UGameplayStatics::PlaySound2D(this, LevelUpSound ? LevelUpSound.Get() : LumiRetroSounds::Create(this, ELumiRetroSound::LevelUp));
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 6.f, FColor::Yellow,
