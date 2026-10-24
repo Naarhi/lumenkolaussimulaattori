@@ -10,7 +10,6 @@ const SNOW_LEVEL := 0.30
 const FALU_RED := Color(0.52, 0.11, 0.07)
 const WHITE_TRIM := Color(0.92, 0.92, 0.88)
 const ROAD_HALF_WIDTH := Village.ROAD_HALF_WIDTH
-const ROAD_OFFSET := Village.ROAD_Z - 9.6
 
 static var _materials := {}
 static var _snow_material: StandardMaterial3D
@@ -18,10 +17,11 @@ static var _snow_material: StandardMaterial3D
 
 ## Rakentaa maiseman root-solmun alle. Palauttaa viittaukset (lumisade) pelilogiikalle.
 static func build(root: Node3D, snow: Node3D) -> Dictionary:
+	# Piha alkaa pohjoisesta talon edestä (z = -hz) ja ulottuu tien reunaan asti.
 	var field: Vector2 = snow.size()
 	var hx := field.x * 0.5
-	var hz := field.y * 0.5
-	var road_z := hz + ROAD_OFFSET
+	var hz := -snow.position.z
+	var road_z := Village.ROAD_Z
 	var world := Node3D.new()
 	world.name = "Pihapiiri"
 	root.add_child(world)
@@ -30,7 +30,7 @@ static func build(root: Node3D, snow: Node3D) -> Dictionary:
 	_ground(world, hx, hz, road_z)
 	_house(world, Vector3(0, 0, -hz - 5.5))
 	_sauna(world, Vector3(-hx - 5.0, 0, -3.0))
-	_fence(world, hx + 1.2, -hz, hz)
+	_fence(world, hx + 1.2, -hz, road_z - ROAD_HALF_WIDTH - 0.8)
 	_mailbox(world, Vector3(4.5, 0, road_z - ROAD_HALF_WIDTH - 0.5))
 	_street_lamp(world, Vector3(-6.0, 0, road_z - ROAD_HALF_WIDTH - 0.6))
 	for i in Village.NEIGHBOURS.size():
@@ -106,8 +106,10 @@ static func _ground(world: Node3D, hx: float, hz: float, road_z: float) -> void:
 	# Pihan sorapinta, joka paljastuu kun lumi kolataan pois.
 	var gravel := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(hx * 2.0, hz * 2.0)
+	var road_near := road_z - ROAD_HALF_WIDTH
+	plane.size = Vector2(hx * 2.0, hz + road_near)
 	gravel.mesh = plane
+	gravel.position.z = (road_near - hz) * 0.5
 	var noise := FastNoiseLite.new()
 	noise.frequency = 0.4
 	var tex := NoiseTexture2D.new()
@@ -126,29 +128,42 @@ static func _ground(world: Node3D, hx: float, hz: float, road_z: float) -> void:
 
 	# Ympäröivä koskematon lumi samalla tasolla kuin pihan lähtölumi.
 	var far := 120.0
-	var road_near := road_z - ROAD_HALF_WIDTH
 	var road_far := road_z + ROAD_HALF_WIDTH
 	_snow_slab(world, Rect2(-far, -far, 2 * far, far - hz))                     # pohjoinen
 	_snow_slab(world, Rect2(-far, -hz, far - hx, road_near + hz))               # länsi
 	_snow_slab(world, Rect2(hx, -hz, far - hx, road_near + hz))                 # itä
-	_snow_slab(world, Rect2(-hx, hz, 2 * hx, road_near - hz))                   # pihan ja tien väli
 	_snow_slab_with_holes(world, Rect2(-far, road_far, 2 * far, far - road_far), _plots())  # tien takana
 
 	# Aurattu tie: tiivistynyt harmaa lumi ja aurausvallit.
 	var road := _box(world, Vector3(2 * far, 0.06, 2 * ROAD_HALF_WIDTH), Vector3(0, 0.03, road_z), Color(0.55, 0.56, 0.6), 0.6)
 	road.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	for side in [-1.0, 1.0]:
-		var bank := MeshInstance3D.new()
-		var capsule := CapsuleMesh.new()
-		capsule.radius = 0.45
-		capsule.height = 2 * far
-		bank.mesh = capsule
-		bank.material_override = snow_material()
-		bank.rotation_degrees.z = 90
-		bank.scale = Vector3(1, 1, 0.8)
-		bank.position = Vector3(0, SNOW_LEVEL, road_z + side * (ROAD_HALF_WIDTH + 0.25))
-		world.add_child(bank)
-	# Pihatien liittymä tiehen (aurattu kaista ei ole, aura-auto tukkii sen).
+	# Aurausvallit tien molemmin puolin. Pihojen kohdalla vallia ei ole valmiina,
+	# vaan aura-auto puskee sen pihan lumeen, jolloin tien vieressä on vain yksi penkka.
+	var north_gaps := [Vector2(-hx, hx)]
+	var south_gaps := []
+	for plot in _plots():
+		south_gaps.append(Vector2(plot.position.x, plot.end.x))
+	_banks(world, -far, far, road_z - ROAD_HALF_WIDTH - 0.25, north_gaps)
+	_banks(world, -far, far, road_z + ROAD_HALF_WIDTH + 0.25, south_gaps)
+
+
+## Pyöreä aurausvalli väleille x0..x1, paitsi aukkojen (Vector2(alku, loppu)) kohdalla.
+static func _banks(world: Node3D, x0: float, x1: float, z: float, gaps: Array) -> void:
+	var x := x0
+	for gap in gaps + [Vector2(x1, x1)]:
+		var length: float = gap.x - x
+		if length > 1.0:
+			var bank := MeshInstance3D.new()
+			var capsule := CapsuleMesh.new()
+			capsule.radius = 0.45
+			capsule.height = length
+			bank.mesh = capsule
+			bank.material_override = snow_material()
+			bank.rotation_degrees.z = 90
+			bank.scale = Vector3(1, 1, 0.8)
+			bank.position = Vector3(x + length * 0.5, SNOW_LEVEL, z)
+			world.add_child(bank)
+		x = gap.y
 
 
 static func _snow_slab(world: Node3D, rect: Rect2) -> void:

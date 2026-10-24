@@ -73,7 +73,9 @@ var _autotest_started := false
 
 
 func _ready() -> void:
-	snow.position = Vector3(-snow.size().x * 0.5, 0.0, -snow.size().y * 0.5)
+	# Kotipiha ulottuu talon edestä tien reunaan asti, jotta aura-auton penkka on suoraan tien vieressä.
+	snow.setup(19.2, 9.6 + Village.ROAD_Z - Village.ROAD_HALF_WIDTH)
+	snow.position = Vector3(-snow.size().x * 0.5, 0.0, -9.6)
 	dedicated = Net.cli.has("server") or OS.has_feature("dedicated_server")
 	neighbours = NeighboursScript.new()
 	neighbours.name = "Naapurit"

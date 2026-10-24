@@ -86,11 +86,11 @@ func trigger(type: int) -> void:
 	var point := Vector3.ZERO
 	match type:
 		AURA_AUTO:
-			var row: int = snow.cells_z - 4
+			var row: int = snow.cells_z - 3
 			snow.add_snow_line(snow.cell_center(0, row), snow.cell_center(snow.cells_x - 1, row), 0.9, 45)
 			# Naapurien pihateiden suut tukkeutuvat myös.
 			for field in main.neighbours.fields:
-				field.add_snow_line(field.cell_center(0, 4), field.cell_center(field.cells_x - 1, 4), 0.9, 35)
+				field.add_snow_line(field.cell_center(0, 3), field.cell_center(field.cells_x - 1, 3), 0.9, 35)
 		LUMIMYRSKY:
 			snow.add_snow_everywhere(8, snow.STORM_MAX_DEPTH_CM)
 		HIRVI:
@@ -132,7 +132,7 @@ func _cl_visual(type: int, point: Vector3, field_depth: float) -> void:
 		AURA_AUTO:
 			var truck := Pihapiiri.make_plow_truck()
 			world.add_child(truck)
-			var road_z := field_depth * 0.5 + 3.2
+			var road_z := Village.ROAD_Z
 			truck.position = Vector3(-45, 0, road_z)
 			var tween := create_tween()
 			tween.tween_property(truck, "position:x", 45.0, 7.0)
