@@ -31,5 +31,13 @@ grep -q "AUTOTEST OK" "$LOG/client1.log" && grep -q "AUTOTEST OK" "$LOG/client2.
 grep -q "SCRIPT ERROR" "$LOG"/*.log && fail=1
 # Palvelin välitti molempien chat-viestit.
 [ "$(grep -c '\[Chat\]' "$LOG/server.log")" -ge 2 ] || { echo "Chat-viestit puuttuvat"; fail=1; }
+# Jokainen työkalu yksinpelissä
+for t in 1 2 3 4; do
+	if "$GODOT" --headless --path "$ROOT" -- --host --port=$((PORT + 10 + t)) --autotest --tool=$t >"$LOG/tool$t.log" 2>&1; then
+		grep "AUTOTEST .*lumi" "$LOG/tool$t.log"
+	else
+		echo "Työkalu $t epäonnistui"; grep -E "AUTOTEST|SCRIPT ERROR" "$LOG/tool$t.log" | head -5; fail=1
+	fi
+done
 if [ $fail -eq 0 ]; then echo "MONINPELITESTI OK"; else echo "MONINPELITESTI EPÄONNISTUI (lokit: $LOG)"; fi
 exit $fail
