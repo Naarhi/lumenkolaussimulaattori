@@ -1,34 +1,50 @@
 extends Node
 ## Oma Old School RuneScapen henkinen taustamusiikki, joka syntetisoidaan koodissa.
-## Kappale "Pihan valssi" (D-molli, 100 bpm, 16 tahtia) on sävelletty tätä peliä varten.
+## Kappale "Kolaajan jigi" (D-duuri, 6/8, reipas merimieslaulun tapainen) on sävelletty tätä peliä varten.
 ## Synteesi tehdään taustasäikeessä, jottei peli nyki käynnistyessä.
 
 const MIX_RATE := 22050
-const BPM := 100.0
-const EIGHTH := 60.0 / BPM / 2.0
+const EIGHTH := 0.18  # pisteellinen neljäsosa noin 110 bpm
+const BAR := 6  # kahdeksasosaa tahdissa
 const BUS := "Musiikki"
 
-# Melodia: [sävel, kesto kahdeksasosina]. "." on tauko.
+# Melodia: [sävel, kesto kahdeksasosina], yksi rivi on yksi tahti. "." on tauko.
 const MELODY := [
-	["D5", 4], ["F5", 2], ["A5", 2], ["G5", 3], ["F5", 1], ["E5", 2], ["D5", 2],
-	["F5", 4], ["D5", 2], ["A#4", 2], ["C5", 3], ["D5", 1], ["C5", 2], ["A#4", 2],
-	["E5", 4], ["G5", 2], ["E5", 2], ["C5", 3], ["D5", 1], ["E5", 2], ["G5", 2],
-	["A5", 6], ["G5", 2], ["E5", 8],
-	["D5", 4], ["F5", 2], ["A5", 2], ["D6", 3], ["C6", 1], ["A5", 2], ["F5", 2],
-	["G5", 4], ["A#5", 2], ["G5", 2], ["D5", 3], ["E5", 1], ["F5", 2], ["G5", 2],
-	["A5", 3], ["G5", 1], ["F5", 2], ["E5", 2], ["C#5", 4], ["E5", 2], ["A4", 2],
-	["D5", 8], [".", 8],
+	["A4", 2], ["D5", 1], ["F#5", 2], ["D5", 1],
+	["G5", 2], ["B5", 1], ["A5", 2], ["G5", 1],
+	["F#5", 2], ["A5", 1], ["D5", 2], ["F#5", 1],
+	["E5", 3], ["C#5", 2], ["A4", 1],
+	["A4", 2], ["D5", 1], ["F#5", 2], ["A5", 1],
+	["B5", 2], ["G5", 1], ["B5", 2], ["D6", 1],
+	["C#6", 2], ["A5", 1], ["G5", 2], ["E5", 1],
+	["D5", 5], [".", 1],
+	["B5", 2], ["A5", 1], ["G5", 2], ["B5", 1],
+	["A5", 2], ["F#5", 1], ["D5", 2], ["F#5", 1],
+	["G5", 2], ["E5", 1], ["B4", 2], ["E5", 1],
+	["C#5", 2], ["E5", 1], ["A5", 3],
+	["F#5", 1], ["G5", 1], ["A5", 1], ["D6", 2], ["A5", 1],
+	["B5", 2], ["G5", 1], ["E5", 2], ["G5", 1],
+	["F#5", 2], ["E5", 1], ["C#5", 2], ["E5", 1],
+	["D5", 4], [".", 2],
 ]
-# Sointu kahdeksi tahdiksi kerrallaan: pohjasävel ja soinnun sävelet.
+# Sointu tahti kerrallaan: pohjasävel ja soinnun sävelet.
 const CHORDS := [
-	["D3", ["D4", "F4", "A4"]],
-	["A#2", ["A#3", "D4", "F4"]],
-	["C3", ["C4", "E4", "G4"]],
-	["A2", ["A3", "C4", "E4"]],
-	["D3", ["D4", "F4", "A4"]],
-	["G2", ["G3", "A#3", "D4"]],
+	["D3", ["D4", "F#4", "A4"]],
+	["G2", ["G3", "B3", "D4"]],
+	["D3", ["D4", "F#4", "A4"]],
 	["A2", ["A3", "C#4", "E4"]],
-	["D3", ["D4", "F4", "A4"]],
+	["D3", ["D4", "F#4", "A4"]],
+	["G2", ["G3", "B3", "D4"]],
+	["A2", ["A3", "C#4", "E4"]],
+	["D3", ["D4", "F#4", "A4"]],
+	["G2", ["G3", "B3", "D4"]],
+	["D3", ["D4", "F#4", "A4"]],
+	["E3", ["E4", "G4", "B4"]],
+	["A2", ["A3", "C#4", "E4"]],
+	["D3", ["D4", "F#4", "A4"]],
+	["G2", ["G3", "B3", "D4"]],
+	["A2", ["A3", "C#4", "E4"]],
+	["D3", ["D4", "F#4", "A4"]],
 ]
 
 var _player: AudioStreamPlayer
@@ -49,37 +65,40 @@ func _ready() -> void:
 
 
 func _compose() -> void:
-	var bars := CHORDS.size() * 2
-	var length := int(bars * 8 * EIGHTH * MIX_RATE)
+	# Kappale soitetaan kahdesti, toisella kerralla melodia oktaavia ylempää kuin kaiku.
+	var bars := CHORDS.size()
+	var song := bars * BAR * EIGHTH
+	var length := int(song * 2.0 * MIX_RATE)
 	_buf.resize(length)
 	_buf.fill(0.0)
 	_rng.seed = 2026
 
-	# Melodia: pehmeä pulssiaalto ja vibrato (OSRS:n "huilu").
-	var t := 0.0
-	for note in MELODY:
-		var duration: float = note[1] * EIGHTH
-		if note[0] != ".":
-			_tone(t, duration * 0.95, _freq(note[0]), 0.16, 0.25, 5.0)
-		t += duration
+	for lap in 2:
+		var offset := lap * song
+		# Melodia: kirkas pulssiaalto, lyhyet ja hyppivät sävelet.
+		var t := offset
+		for note in MELODY:
+			var duration: float = note[1] * EIGHTH
+			if note[0] != ".":
+				var f := _freq(note[0])
+				_tone(t, duration * 0.8, f, 0.15, 0.25, 6.0)
+				if lap == 1:
+					_tone(t, duration * 0.6, f * 2.0, 0.04, 0.125, 0.0)
+			t += duration
 
-	for i in CHORDS.size():
-		var start := i * 16 * EIGHTH
-		var root := _freq(CHORDS[i][0])
-		# Basso: pohjasävel, kvintti, oktaavi ja kvintti kahdeksasosina.
-		for step in 16:
-			var f: float = root * [1.0, 1.5, 2.0, 1.5][step % 4]
-			_triangle(start + step * EIGHTH, EIGHTH * 0.9, f, 0.13)
-		# Pehmeä sointumatto
-		for tone in CHORDS[i][1]:
-			_tone(start, 16 * EIGHTH, _freq(tone), 0.035, 0.5, 0.0)
-		# Rummut: matala isku 1. ja 3. iskulla, kohinanapsu 2. ja 4. iskulla.
-		for beat in 8:
-			var bt := start + beat * 2 * EIGHTH
-			if beat % 2 == 0:
-				_kick(bt)
-			else:
-				_snare(bt)
+		for i in bars:
+			var start := offset + i * BAR * EIGHTH
+			var root := _freq(CHORDS[i][0])
+			# Umpa-umpa: basso 1. ja 4. kahdeksasosalla, soinnun napsut niiden jälkeen.
+			_triangle(start, EIGHTH * 2.5, root, 0.16)
+			_triangle(start + 3 * EIGHTH, EIGHTH * 2.5, root * 1.5, 0.13)
+			for step in [1, 2, 4, 5]:
+				for tone in CHORDS[i][1]:
+					_tone(start + step * EIGHTH, EIGHTH * 0.5, _freq(tone), 0.03, 0.5, 0.0)
+			_kick(start)
+			_snare(start + 3 * EIGHTH)
+			if lap == 1:
+				_snare(start + 5 * EIGHTH)
 
 	var data := PackedByteArray()
 	data.resize(length * 2)
