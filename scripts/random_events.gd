@@ -18,6 +18,9 @@ const EVENTS := [
 ## Lumiukko kaatuu, kun sen alla on lunta enää tämän verran (cm).
 const SNOWMAN_FALL_CM := 25
 const SNOWMAN_XP := 30
+## Aura-auton pihatien suulle jättämä penkka: lisäys kerralla ja suurin korkeus (cm).
+const TRUCK_BANK_CM := 15
+const TRUCK_BANK_MAX_CM := 35
 const BOTTLES_PER_DELIVERY := 3
 const BOTTLE_LIFETIME := 180.0
 const DRINK_DISTANCE := 1.6
@@ -78,6 +81,10 @@ func _schedule() -> void:
 
 
 func _on_timer() -> void:
+	# Tyhjällä palvelimella ei satu mitään, ettei yön aikana kasaannu lumiukkoja ja lumivuoria.
+	if get_parent().players.get_child_count() == 0:
+		_schedule()
+		return
 	var total := 0.0
 	for e in EVENTS:
 		total += e["weight"]
@@ -104,7 +111,8 @@ func trigger(type: int) -> void:
 			_truck_hit.clear()
 			# Naapurien pihateiden suut tukkeutuvat (kotipiha on aurattu valmiiksi).
 			for field in main.neighbours.fields:
-				field.add_snow_line(field.cell_center(0, 3), field.cell_center(field.cells_x - 1, 3), 0.9, 35)
+				# Matala penkka, joka ei kasva seinäksi, vaikka auto ajaisi ohi monta kertaa.
+				field.add_snow_line(field.cell_center(0, 3), field.cell_center(field.cells_x - 1, 3), 0.8, TRUCK_BANK_CM, TRUCK_BANK_MAX_CM)
 		LUMIMYRSKY:
 			for field in main.neighbours.fields:
 				field.add_snow_everywhere(8, field.STORM_MAX_DEPTH_CM)
@@ -133,12 +141,17 @@ func trigger(type: int) -> void:
 				_cl_bottle.rpc(id, spot)
 				get_tree().create_timer(BOTTLE_LIFETIME).timeout.connect(func(): if bottles.has(id): _cl_remove_bottle.rpc(id))
 		LUMIUKKO:
+			# Kerrallaan vain yksi lumiukko.
+			if not snowmen.is_empty():
+				return
 			var index: int = randi() % main.neighbours.fields.size()
 			var field = main.neighbours.fields[index]
 			var n: Dictionary = Village.NEIGHBOURS[index]
 			# Keskelle pihatietä, ei lumikasan kaistalle.
 			point = field.to_global(Vector3(n["w"] * randf_range(0.3, 0.7), 0.0, n["d"] * randf_range(0.3, 0.7)))
-			field.add_snow(point, 0.8, 9000)
+			field.add_snow(point, 0.6, 3500)
+			# Ukko seisoo lumikasan päällä.
+			point.y = maxf(main.depth_at(point) / 100.0 - 0.15, 0.0)
 			var id := _next_snowman
 			_next_snowman += 1
 			_cl_snowman.rpc(id, point)
@@ -221,8 +234,17 @@ func _cl_snowman(id: int, pos: Vector3) -> void:
 	if DisplayServer.get_name() == "headless" or _snowman_nodes.has(id):
 		return
 	var node := Pihapiiri.make_snowman()
+	var label := Label3D.new()
+	label.text = "Lasten lumiukko\nkolaa lumet alta (+%d XP)" % SNOWMAN_XP
+	label.position.y = 2.1
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.font_size = 36
+	label.pixel_size = 0.005
+	label.outline_size = 8
+	label.modulate = Color(0.85, 0.95, 1.0)
+	node.add_child(label)
 	get_parent().add_child(node)
-	node.position = pos + Vector3(0, 0.5, 0)
+	node.position = pos
 	node.rotation.y = randf() * TAU
 	_snowman_nodes[id] = node
 

@@ -1128,6 +1128,7 @@ func _autotest_workers(me) -> bool:
 ## Lapset rakentavat lumiukon, ja se kaatuu, kun lumet kolataan sen alta.
 func _autotest_snowman(me) -> bool:
 	events.trigger(events.LUMIUKKO)
+	events.trigger(events.LUMIUKKO)
 	await get_tree().create_timer(0.3).timeout
 	var built: bool = events.snowmen.size() == 1
 	var spot: Vector3 = events.snowmen.values()[0] if built else Vector3.ZERO

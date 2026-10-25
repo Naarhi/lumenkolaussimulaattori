@@ -214,14 +214,15 @@ func add_snow_everywhere(depth_cm: int, max_depth_cm: int) -> void:
 
 
 ## Lunta janan suuntaiselle kaistalle (esim. aura-auton penkka).
-func add_snow_line(start: Vector3, end: Vector3, width: float, depth_cm: int) -> void:
+## Lisää lunta janalle. max_cm rajaa, kuinka korkeaksi kasa saa kasvaa (toistuvat aurauskerrat).
+func add_snow_line(start: Vector3, end: Vector3, width: float, depth_cm: int, max_cm := MAX_DEPTH_CM) -> void:
 	var a := Vector2(to_local(start).x, to_local(start).z)
 	var b := Vector2(to_local(end).x, to_local(end).z)
 	for z in cells_z:
 		for x in cells_x:
 			var p := Vector2((x + 0.5) * CELL_SIZE, (z + 0.5) * CELL_SIZE)
 			if p.distance_to(Geometry2D.get_closest_point_to_segment(p, a, b)) <= width * 0.5:
-				_change(x, z, depth_cm)
+				_change(x, z, clampi(max_cm - heights[z * cells_x + x], 0, depth_cm))
 
 
 # --- Kyselyt -----------------------------------------------------------------
