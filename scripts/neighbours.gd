@@ -36,6 +36,8 @@ func _ready() -> void:
 		field.position = Village.neighbour_origin(i)
 		add_child(field)
 		fields.append(field)
+		# Suolaus on kolaajan työtä: sulanut lumi kirjataan suolaajalle.
+		field.salt_melted.connect(func(peer: int, amount: int): credit(field, peer, amount))
 
 
 func start_server() -> void:

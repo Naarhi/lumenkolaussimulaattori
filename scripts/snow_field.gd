@@ -27,6 +27,8 @@ var initial_depth := INITIAL_DEPTH_CM
 var snowfall := true
 ## Palvelin: sulatettu lumi (liekinheitin ja suola), jotta naapuri tietää, minne lumet menivät.
 var melted_total := 0
+## Palvelin: suola sulatti pelaajan suolaamista soluista amount cm x solua lunta.
+signal salt_melted(peer: int, amount: int)
 var heights := PackedByteArray()
 var material: StandardMaterial3D
 
@@ -37,6 +39,8 @@ var _meshes: Array[MeshInstance3D] = []
 var _snowfall_acc := 0.0
 # Palvelin: suolatut solut {indeksi: vanhenemishetki} ja oma kello sekunteina.
 var _salted := {}
+## Palvelin: kuka suolasi solun ({solu: pelaaja}). Sulanut lumi lasketaan suolaajan työksi.
+var _salt_owner := {}
 var _clock := 0.0
 var _melt_acc := 0.0
 var _render := true
@@ -173,11 +177,13 @@ func add_snow(world_pos: Vector3, radius: float, amount: int) -> void:
 		_change(cells[i].x, cells[i].y, roundi(amount * weights[i] / total))
 
 
-## Suolaa ympyrän alueen duration sekunniksi.
-func salt_area(world_pos: Vector3, radius: float, duration: float) -> int:
+## Suolaa ympyrän alueen duration sekunniksi. peer on suolaaja, jolle sulanut lumi kirjataan.
+func salt_area(world_pos: Vector3, radius: float, duration: float, peer := 0) -> int:
 	var count := 0
 	for cell in _cells_in_radius(world_pos, radius):
-		_salted[cell.y * cells_x + cell.x] = _clock + duration
+		var index := cell.y * cells_x + cell.x
+		_salted[index] = _clock + duration
+		_salt_owner[index] = peer
 		count += 1
 	return count
 
@@ -193,15 +199,23 @@ func melt_salted(delta: float) -> void:
 	if _melt_acc < SALT_MELT_INTERVAL:
 		return
 	_melt_acc = 0.0
+	var by_peer := {}
 	for index in _salted.keys():
 		if _salted[index] <= _clock:
 			_salted.erase(index)
+			_salt_owner.erase(index)
 			continue
 		var x: int = index % cells_x
 		@warning_ignore("integer_division")
 		var z: int = index / cells_x
 		if heights[index] > 0:
-			melted_total -= _change(x, z, -SALT_MELT_CM)
+			var melted := -_change(x, z, -SALT_MELT_CM)
+			melted_total += melted
+			var peer: int = _salt_owner.get(index, 0)
+			by_peer[peer] = by_peer.get(peer, 0) + melted
+	for peer in by_peer:
+		if peer != 0:
+			salt_melted.emit(peer, by_peer[peer])
 
 
 ## Sataa lunta koko pihalle, mutta vain soluihin, joissa lunta on alle max_depth_cm.
