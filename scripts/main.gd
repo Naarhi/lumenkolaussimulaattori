@@ -867,8 +867,7 @@ func _server_tools(delta: float) -> void:
 				var spot := feet + forward * 1.2
 				var field = field_at(spot)
 				if field:
-					var cells: int = field.salt_area(spot, 0.7, SALT_DURATION)
-					neighbours.credit(field, id, cells * 3.0)
+					field.salt_area(spot, 0.7, SALT_DURATION, id)
 				_salt[id] = maxf(_salt.get(id, 0.0) - SALT_PER_USE, 0.0)
 				_profile_dirty[id] = true
 		_xp_pending[id] = _xp_pending.get(id, 0.0) + xp
