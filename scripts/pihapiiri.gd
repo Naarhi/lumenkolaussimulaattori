@@ -138,8 +138,16 @@ static func _ground(world: Node3D, hx: float, hz: float, road_z: float) -> void:
 	_snow_slab_with_holes(world, Rect2(-far, road_far, 2 * far, far - road_far), _plots())  # tien takana
 
 	# Aurattu tie: tiivistynyt harmaa lumi ja aurausvallit.
-	var road := _box(world, Vector3(2 * far, 0.06, 2 * ROAD_HALF_WIDTH), Vector3(0, 0.03, road_z), Color(0.55, 0.56, 0.6), 0.6)
+	# Tielle jää aurauksen jälkeen ohut, tiivis lumikerros, jossa näkyvät renkaiden urat.
+	var road := _box(world, Vector3(2 * far, 0.06, 2 * ROAD_HALF_WIDTH), Vector3(0, 0.03, road_z), Color.WHITE, 0.6)
+	var road_mat: StandardMaterial3D = snow_material().duplicate()
+	road_mat.albedo_color = Color(0.86, 0.87, 0.9)
+	road.material_override = road_mat
 	road.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for lane in [-0.75, 0.75]:
+		for wheel in [-0.3, 0.3]:
+			var track := _box(world, Vector3(2 * far, 0.01, 0.22), Vector3(0, 0.065, road_z + lane + wheel), Color(0.6, 0.6, 0.64), 0.8)
+			track.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	# Aurausvallit tien molemmin puolin. Pihojen kohdalla vallia ei ole valmiina,
 	# vaan aura-auto puskee sen pihan lumeen, jolloin tien vieressä on vain yksi penkka.
 	var north_gaps := [Vector2(-hx, hx)]
